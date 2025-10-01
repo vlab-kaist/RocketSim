@@ -390,8 +390,9 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 						isDemo = false;
 						break;
 					default:
-						isDemo = state.isSupersonic;
-					}
+						if (dirToOtherCar.Dot(velDir)>(std::sqrt(2.0) / 2.0)){
+							isDemo = state.isSupersonic;
+						}
 
 					if (isDemo && !_mutatorConfig.enableTeamDemos)
 						isDemo = car1->team != car2->team;
