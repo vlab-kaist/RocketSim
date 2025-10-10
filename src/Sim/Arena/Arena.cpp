@@ -373,7 +373,7 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 			Vec dirToOtherCar = deltaPos.Normalized();
 
 			float speedTowardsOtherCar = state.vel.Dot(dirToOtherCar);
-			float otherCarAwaySpeed = otherState.vel.Dot(velDir);
+			float otherCarAwaySpeed = otherState.vel.Dot(dirToOtherCar);
 
 			if (speedTowardsOtherCar > otherCarAwaySpeed) { // Going towards other car faster than they are going away
 
