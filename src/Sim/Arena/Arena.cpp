@@ -391,14 +391,14 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 						isDemo = false;
 						break;
 					default:
-						Vec right   = rotMat.right;
-						Vec up      = rotMat.up;
-						Vec forward = rotMat.forward;
+						Vec right   = MyrotMat.right;
+						Vec up      = MyrotMat.up;
+						Vec forward = MyrotMat.forward;
 
 						Vec dirToOtherCar_local = {
-							dirToOtherCar.dot(right),    // local X
-							dirToOtherCar.dot(forward),  // local Y
-							dirToOtherCar.dot(up)        // local Z
+							dirToOtherCar.Dot(right),    // local X
+							dirToOtherCar.Dot(forward),  // local Y
+							dirToOtherCar.Dot(up)        // local Z
 						};
 
 						// XY 평면 각도
@@ -406,7 +406,7 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 						// Z축 각도
 						float cosZ = std::abs(dirToOtherCar_local.z);
 
-						if(state.isSupersonic && std::abs(dirToOtherCar_local.y) > std::sqrt(2.0f)/2.0f*lenXY && cosZ < std::cos(53.0f * 3.1415927f / 180.0f)*lenZ) {
+						if(state.isSupersonic && std::abs(dirToOtherCar_local.y) > std::sqrt(2.0f)/2.0f*lenXY && cosZ < std::cos(53.0f * 3.1415927f / 180.0f)) {
 							isDemo = true;
 						}
 
