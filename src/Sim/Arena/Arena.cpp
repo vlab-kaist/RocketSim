@@ -369,7 +369,7 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 		Vec deltaPos = (otherState.pos - state.pos);
 		if (state.vel.Dot(deltaPos) > 0) { // Going towards other car
 
-			Vec velDir = state.vel.Normalized();
+			RotMat MyrotMat = state.rotMat;
 			Vec dirToOtherCar = deltaPos.Normalized();
 
 			float speedTowardsOtherCar = state.vel.Dot(dirToOtherCar);
@@ -390,24 +390,28 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 						isDemo = false;
 						break;
 					default:
-						double normA = std::sqrt(velDir.x*velDir.x + velDir.y*velDir.y + velDir.z*velDir.z);
-						double normB = std::sqrt(dirToOtherCar.x*dirToOtherCar.x + dirToOtherCar.y*dirToOtherCar.y + dirToOtherCar.z*dirToOtherCar.z);
-						if(normA == 0 || normB == 0) return false;
+						Vec right   = rotMat.right;
+						Vec up      = rotMat.up;
+						Vec forward = rotMat.forward;
 
-						// xy평면 코사인
-						double normA_xy = std::sqrt(velDir.x*velDir.x + velDir.y*velDir.y);
-						double normB_xy = std::sqrt(dirToOtherCar.x*dirToOtherCar.x + dirToOtherCar.y*dirToOtherCar.y);
-						if(normA_xy == 0 || normB_xy == 0) return false;
-						double cos_xy = (velDir.x*dirToOtherCar.x + velDir.y*dirToOtherCar.y) / (normA_xy * normB_xy);
+						Vec dirToOtherCar_local = {
+							dirToOtherCar.dot(right),    // local X
+							dirToOtherCar.dot(forward),  // local Y
+							dirToOtherCar.dot(up)        // local Z
+						};
 
-						// z축 방향 코사인
-						double cos_z = (velDir.z / normA) * (dirToOtherCar.z / normB);
+						// XY 평면 각도
+						float lenXY = std::sqrt(dirToOtherCar_local.x*dirToOtherCar_local.x + dirToOtherCar_local.y*dirToOtherCar_local.y);
+						float cosXY = lenXY > 1e-6f ? dirToOtherCar_local.y / lenXY : 0.0f; // forward 기준
 
-						if (cos_xy > std::sqrt(2.0)/2.0) && (cos_z > std::cos(37.0 * M_PI / 180.0)){
+						// Z축 각도
+						float cosZ = dirToOtherCar_local.z;
+
+						if(cosXY > std::sqrt(2.0f)/2.0f && cosZ > std::cos(37.0f * 3.1415927f / 180.0f)) {
 							isDemo = state.isSupersonic;
 						}
 
-						// if (dirToOtherCar.Dot(velDir)>(std::sqrt(2.0) / 2.0)){
+						// if (dirToOtherCar.Dot(fowardDir)>(std::sqrt(2.0) / 2.0)){
 						// 	isDemo = state.isSupersonic;
 						// }
 						break;
@@ -428,7 +432,7 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 							(otherState.isOnGround ? (Vec)car2->GetUpDir() : Vec(0, 0, 1));
 
 						Vec bumpImpulse =
-							velDir * baseScale +
+							fowardDir * baseScale +
 							hitUpDir * BUMP_UPWARD_VEL_AMOUNT_CURVE.GetOutput(speedTowardsOtherCar)
 							* _mutatorConfig.bumpForceScale;
 
