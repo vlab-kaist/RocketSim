@@ -403,7 +403,7 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 						// z축 방향 코사인
 						double cos_z = (velDir.z / normA) * (dirToOtherCar.z / normB);
 
-						if (cos_xy < std::sqrt(2.0)/2.0) && (cos_z < std::cos(37.0 * M_PI / 180.0)){
+						if (cos_xy > std::sqrt(2.0)/2.0) && (cos_z > std::cos(37.0 * M_PI / 180.0)){
 							isDemo = state.isSupersonic;
 						}
 
