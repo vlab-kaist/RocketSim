@@ -88,7 +88,7 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 	if (_internalState.isDemoed)
 		return; // No other updates need to occur
 
-	// Do first part of the btVehicleRL update (update wheel transforms, do traces, calculate friction impulses) 
+	// Do first part of the btVehicleRL update (update wheel transforms, do traces, calculate friction impulses)
 	_bulletVehicle.updateVehicleFirst(tickTime);
 
 	btMatrix3x3 basis = _rigidBody.getWorldTransform().m_basis;
@@ -148,6 +148,7 @@ void Car::_PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig
 		} else {
 			_internalState.isSupersonic =
 				(speedSquared >= RLConst::SUPERSONIC_START_SPEED * RLConst::SUPERSONIC_START_SPEED);
+			_internalState.supersonicTime = 0;
 		}
 
 		if (_internalState.isSupersonic) {
@@ -225,7 +226,7 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
 
 	// Disable gyroscopic force
 	_rigidBody.m_rigidbodyFlags = 0;
-	
+
 	// We want our car and our suspension rays to collide with the dropshot floor
 	int extraCollisionMask = CollisionMasks::DROPSHOT_FLOOR;
 
@@ -295,8 +296,8 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
 }
 
 bool CarState::HasFlipOrJump() const {
-	return 
-		isOnGround || 
+	return
+		isOnGround ||
 		(!hasFlipped && !hasDoubleJumped && airTimeSinceJump < RLConst::DOUBLEJUMP_MAX_DELAY);
 }
 
@@ -835,7 +836,7 @@ void Car::_UpdateAutoRoll(float tickTime, const MutatorConfig& mutatorConfig, in
 		forwardDir = GetForwardDir(),
 		rightDir = GetRightDir(),
 		upDir = GetUpDir();
-	
+
 	btVector3
 		crossRightDir = groundUpDir.cross(forwardDir),
 		crossForwardDir = groundDownDir.cross(crossRightDir);
