@@ -140,23 +140,21 @@ void Car::_PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig
 	_internalState.rotMat = _rigidBody.getWorldTransform().m_basis;
 
 	{ // Update supersonic
-		float speedSquared = (_rigidBody.m_linearVelocity * BT_TO_UU).length2();
+        float speedSquared = (_rigidBody.m_linearVelocity * BT_TO_UU).length2();
 
-		if (_internalState.isSupersonic && _internalState.supersonicTime < RLConst::SUPERSONIC_MAINTAIN_MAX_TIME) {
-			_internalState.isSupersonic =
-				(speedSquared >= RLConst::SUPERSONIC_MAINTAIN_MIN_SPEED * RLConst::SUPERSONIC_MAINTAIN_MIN_SPEED);
-		} else {
-			_internalState.isSupersonic =
-				(speedSquared >= RLConst::SUPERSONIC_START_SPEED * RLConst::SUPERSONIC_START_SPEED);
-			_internalState.supersonicTime = 0;
-		}
-
-		if (_internalState.isSupersonic) {
-			_internalState.supersonicTime += tickTime;
-		} else {
-			_internalState.supersonicTime = 0;
-		}
-	}
+        if (speedSquared >= RLConst::SUPERSONIC_START_SPEED * RLConst::SUPERSONIC_START_SPEED) {
+            _internalState.isSupersonic = true;
+            _internalState.supersonicTime = 0;
+        } else if (_internalState.isSupersonic
+            && speedSquared >= RLConst::SUPERSONIC_MAINTAIN_MIN_SPEED * RLConst::SUPERSONIC_MAINTAIN_MIN_SPEED
+            && _internalState.supersonicTime < RLConst::SUPERSONIC_MAINTAIN_MAX_TIME) {
+            _internalState.isSupersonic = true;
+            _internalState.supersonicTime += tickTime;
+        } else {
+            _internalState.isSupersonic = false;
+            _internalState.supersonicTime = 0;
+        }
+    }
 
 	// Update car contact cooldown timer
 	if (_internalState.carContact.cooldownTimer > 0)
