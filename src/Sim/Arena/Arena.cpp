@@ -382,7 +382,7 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 				bool hitWithBumper = (localPoint.x * BT_TO_UU) > BUMP_MIN_FORWARD_DIST;
 				if (hitWithBumper) {
 
-					bool isDemo=false;
+					bool isDemo = false;
 					switch (_mutatorConfig.demoMode) {
 					case DemoMode::ON_CONTACT:
 						isDemo = true; // BOOM
@@ -391,28 +391,23 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 						isDemo = false;
 						break;
 					default:
-						Vec right   = MyrotMat.right;
-						Vec up      = MyrotMat.up;
-						Vec forward = MyrotMat.forward;
-
 						Vec dirToOtherCar_local = {
-							dirToOtherCar.Dot(right),    // local X
-							dirToOtherCar.Dot(forward),  // local Y
-							dirToOtherCar.Dot(up)        // local Z
+							dirToOtherCar.Dot(MyrotMat.forward),  // local X
+							dirToOtherCar.Dot(MyrotMat.right),    // local Y
+							dirToOtherCar.Dot(MyrotMat.up)        // local Z
 						};
 
-						// XY 평면 각도
-						float lenXY = std::sqrt(dirToOtherCar_local.x*dirToOtherCar_local.x + dirToOtherCar_local.y*dirToOtherCar_local.y);
-						// Z축 각도
-						float cosZ = std::abs(dirToOtherCar_local.z);
+						float lenXY = std::sqrt(
+							dirToOtherCar_local.x * dirToOtherCar_local.x +
+							dirToOtherCar_local.y * dirToOtherCar_local.y
+						);
 
-						if(state.isSupersonic && std::abs(dirToOtherCar_local.y) > std::sqrt(2.0f)/2.0f*lenXY && cosZ < std::cos(53.0f * 3.1415927f / 180.0f)) {
-							isDemo = true;
-						}
-
-						// if (dirToOtherCar.Dot(fowardDir)>(std::sqrt(2.0) / 2.0)){
-						// 	isDemo = state.isSupersonic;
-						// }
+						isDemo = (
+							state.isSupersonic &&
+							std::abs(state.vel.Dot(forward)) >= RLConst::SUPERSONIC_MAINTAIN_MIN_SPEED &&
+							std::abs(dirToOtherCar_local.z) <= std::cos(53.0f * 3.1415926535f / 180.0f) &&
+							std::abs(dirToOtherCar_local.x) >= std::cos(45.0f * 3.1415926535f / 180.0f) * lenXY
+						);
 						break;
 					}
 
