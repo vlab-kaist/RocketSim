@@ -404,7 +404,7 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 
 						isDemo = (
 							state.isSupersonic &&
-							std::abs(state.vel.Dot(forward)) >= RLConst::SUPERSONIC_MAINTAIN_MIN_SPEED &&
+							std::abs(state.vel.Dot(MyrotMat.forward)) >= RLConst::SUPERSONIC_MAINTAIN_MIN_SPEED &&
 							std::abs(dirToOtherCar_local.z) <= std::cos(53.0f * 3.1415926535f / 180.0f) &&
 							std::abs(dirToOtherCar_local.x) >= std::cos(45.0f * 3.1415926535f / 180.0f) * lenXY
 						);
