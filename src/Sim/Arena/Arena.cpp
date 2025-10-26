@@ -382,7 +382,7 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 				bool hitWithBumper = (localPoint.x * BT_TO_UU) > BUMP_MIN_FORWARD_DIST;
 				if (hitWithBumper) {
 
-					bool isDemo;
+					bool isDemo=false;
 					switch (_mutatorConfig.demoMode) {
 					case DemoMode::ON_CONTACT:
 						isDemo = true; // BOOM
