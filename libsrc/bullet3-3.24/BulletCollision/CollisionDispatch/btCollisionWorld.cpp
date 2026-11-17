@@ -243,6 +243,80 @@ void btCollisionWorld::performDiscreteCollisionDetection()
 				continue;
 			btCollisionObjectWrapper obj0Wrap(0, colObj0->getCollisionShape(), colObj0, colObj0->getWorldTransform(), -1, -1);
 			btCollisionObjectWrapper obj1Wrap(0, colObj1->getCollisionShape(), colObj1, colObj1->getWorldTransform(), -1, -1);
+
+			// A car (a compound with one child and no child tree) against something that is not a compound:
+			// what btCompoundCollisionAlgorithm does for it, without the compound algorithm object
+			{
+				auto isSingleChildCompound = [](const btCollisionShape* shape) {
+					return shape->isCompound() && ((const btCompoundShape*)shape)->getNumChildShapes() == 1 &&
+						   !((const btCompoundShape*)shape)->getDynamicAabbTree();
+				};
+				const bool compound0 = isSingleChildCompound(colObj0->getCollisionShape());
+				const bool compound1 = isSingleChildCompound(colObj1->getCollisionShape());
+				if (compound0 != compound1 && !(compound0 ? colObj1 : colObj0)->getCollisionShape()->isCompound() && !pair.m_algorithm)
+				{
+					const btCollisionObjectWrapper* compoundObjWrap = compound0 ? &obj0Wrap : &obj1Wrap;
+					const btCollisionObjectWrapper* otherObjWrap = compound0 ? &obj1Wrap : &obj0Wrap;
+					const btCollisionObject* compoundObj = compoundObjWrap->getCollisionObject();
+					const btCompoundShape* compoundShape = (const btCompoundShape*)compoundObjWrap->getCollisionShape();
+					const btCollisionShape* childShape = compoundShape->getChildShape(0);
+					const btTransform& childTrans = compoundShape->getChildTransform(0);
+
+					// (preallocateChildAlgorithms(), when the compound algorithm is made)
+					btCollisionAlgorithm* childAlgorithm;
+					{
+						btCollisionObjectWrapper childWrap(compoundObjWrap, childShape, compoundObj, compoundObjWrap->getWorldTransform(), -1, 0);
+						childAlgorithm = dispatcher->findAlgorithm(&childWrap, otherObjWrap, 0, BT_CONTACT_POINT_ALGORITHMS);
+					}
+					pair.m_internalInfo1 = childAlgorithm;
+
+					btManifoldResult contactPointResult(&obj0Wrap, &obj1Wrap);
+
+					// (processCollision(): a new child algorithm has no contacts to refresh; ProcessChildShape())
+					btTransform newChildWorldTrans = compoundObjWrap->getWorldTransform() * childTrans;
+					btVector3 aabbMin0, aabbMax0, aabbMin1, aabbMax1;
+					childShape->getAabb(newChildWorldTrans, aabbMin0, aabbMax0);
+					btVector3 extendAabb(contactPointResult.m_closestPointDistanceThreshold, contactPointResult.m_closestPointDistanceThreshold, contactPointResult.m_closestPointDistanceThreshold);
+					aabbMin0 -= extendAabb;
+					aabbMax0 += extendAabb;
+					otherObjWrap->getCollisionShape()->getAabb(otherObjWrap->getWorldTransform(), aabbMin1, aabbMax1);
+					if (TestAabbAgainstAabb2(aabbMin0, aabbMax0, aabbMin1, aabbMax1))
+					{
+						btTransform preTransform = childTrans;
+						btCollisionObjectWrapper compoundWrap(compoundObjWrap, childShape, compoundObj, newChildWorldTrans, preTransform, -1, 0);
+						const btCollisionObjectWrapper* tmpWrap;
+						if (contactPointResult.getBody0Internal() == compoundObj)
+						{
+							tmpWrap = contactPointResult.getBody0Wrap();
+							contactPointResult.setBody0Wrap(&compoundWrap);
+							contactPointResult.setShapeIdentifiersA(-1, 0);
+						}
+						else
+						{
+							tmpWrap = contactPointResult.getBody1Wrap();
+							contactPointResult.setBody1Wrap(&compoundWrap);
+							contactPointResult.setShapeIdentifiersB(-1, 0);
+						}
+						childAlgorithm->processCollision(&compoundWrap, otherObjWrap, dispatchInfo, &contactPointResult);
+						if (contactPointResult.getBody0Internal() == compoundObj)
+							contactPointResult.setBody0Wrap(tmpWrap);
+						else
+							contactPointResult.setBody1Wrap(tmpWrap);
+					}
+
+					// (The end of processCollision(): no longer overlapping, so the child algorithm goes)
+					childShape->getAabb(newChildWorldTrans, aabbMin0, aabbMax0);
+					otherObjWrap->getCollisionShape()->getAabb(otherObjWrap->getWorldTransform(), aabbMin1, aabbMax1);
+					if (!TestAabbAgainstAabb2(aabbMin0, aabbMax0, aabbMin1, aabbMax1))
+					{
+						childAlgorithm->~btCollisionAlgorithm();
+						dispatcher->freeCollisionAlgorithm(childAlgorithm);
+						pair.m_internalInfo1 = 0;
+					}
+					continue;
+				}
+			}
+
 			if (!pair.m_algorithm)
 				pair.m_algorithm = dispatcher->findAlgorithm(&obj0Wrap, &obj1Wrap, 0, BT_CONTACT_POINT_ALGORITHMS);
 			if (pair.m_algorithm)
@@ -280,6 +354,14 @@ void btCollisionWorld::rsReleasePairs(btBroadphaseProxy* onlyProxy)
 			pair.m_algorithm->~btCollisionAlgorithm();
 			m_dispatcher1->freeCollisionAlgorithm(pair.m_algorithm);
 			pair.m_algorithm = 0;
+		}
+		// The child algorithm of a car pair handled without its compound algorithm
+		if (pair.m_internalInfo1)
+		{
+			btCollisionAlgorithm* childAlgorithm = (btCollisionAlgorithm*)pair.m_internalInfo1;
+			childAlgorithm->~btCollisionAlgorithm();
+			m_dispatcher1->freeCollisionAlgorithm(childAlgorithm);
+			pair.m_internalInfo1 = 0;
 		}
 	}
 	m_rsPairs.resize(onlyProxy ? kept : 0);
