@@ -792,13 +792,14 @@ void btDiscreteDynamicsWorld::createPredictiveContactsInternal(btRigidBody** bod
 		btRigidBody* body = bodies[i];
 		body->setHitFraction(1.f);
 
-		if (body->isActive() && (!body->isStaticOrKinematicObject()))
+		// RocketSim: the predicted transform is only needed for bodies that use CCD
+		if (body->isActive() && (!body->isStaticOrKinematicObject()) && getDispatchInfo().m_useContinuous && body->getCcdSquareMotionThreshold())
 		{
 			body->predictIntegratedTransform(timeStep, predictedTrans);
 
 			btScalar squareMotion = (predictedTrans.getOrigin() - body->getWorldTransform().getOrigin()).length2();
 
-			if (getDispatchInfo().m_useContinuous && body->getCcdSquareMotionThreshold() && body->getCcdSquareMotionThreshold() < squareMotion)
+			if (body->getCcdSquareMotionThreshold() < squareMotion)
 			{
 				BT_PROFILE("predictive convexSweepTest");
 				if (body->getCollisionShape()->isConvex())

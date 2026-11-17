@@ -38,6 +38,11 @@ struct ArenaConfig {
 	// Disabled in snowday
 	bool noBallRot = true;
 
+	// Snap every rigid body to the precision the game replicates (position 0.01uu, velocity 0.01uu/s,
+	// angular velocity 1e-4, 18-bit smallest-three rotation) at the start of each tick, as the game does.
+	// Also quantizes the analog car inputs to the byte steps the game uses.
+	bool quantizePhysics = true;
+
 	// Use a custom broadphase designed for RocketSim
 	// Improves performance, but becomes inefficient on giant maps
 	// Turn this off if you want to use a giant map

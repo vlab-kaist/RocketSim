@@ -10,6 +10,9 @@ struct btWheelInfoRL : public btWheelInfo {
 	bool m_isInContactWithWorld = false;
 	float m_steerAngle = 0;
 
+	// sin/cos of half of m_steerAngle, kept for the angle they were computed for
+	float m_cachedSteerAngle = 0, m_steerSinHalf = 0, m_steerCosHalf = 1;
+
 	btVector3 m_velAtContactPoint;
 
 	// lat = sideways, long = forward
@@ -61,6 +64,7 @@ public:
 	};
 
 	btVehicleRaycaster* m_vehicleRaycaster;
+	bool m_applyHitEffects = true;
 	float m_pitchControl;
 	float m_steeringValue;
 
@@ -103,6 +107,7 @@ public:
 	const btTransform& getWheelTransformWS(int wheelIndex) const;
 
 	void updateWheelTransform(int wheelIndex);
+	void updateWheelBasis(int wheelIndex);
 
 	//	void	setRaycastWheelInfo( int wheelIndex , bool isInContact, const btVector3& hitPoint, const btVector3& hitNormal,float depth);
 

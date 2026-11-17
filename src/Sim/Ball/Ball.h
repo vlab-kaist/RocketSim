@@ -87,6 +87,9 @@ public:
 
 	bool _groundStickApplied = false;
 	Vec _velocityImpulseCache = { 0,0,0 };
+
+	// State at the start of the current tick, which the car hit rules read
+	BallState _tickStartState;
 	void _FinishPhysicsTick(const MutatorConfig& mutatorConfig);
 
 	bool IsSphere() const;

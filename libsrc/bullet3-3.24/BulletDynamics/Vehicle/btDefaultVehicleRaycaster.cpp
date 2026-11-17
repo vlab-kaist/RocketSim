@@ -33,7 +33,22 @@ void* btDefaultVehicleRaycaster::castRay(const btVector3& from, const btVector3&
 {
 	//	RayResultCallback& resultCallback;
 
-	btCollisionWorld::ClosestRayResultCallback rayCallback(from, to, ignoreObj);
+	struct MinDistRayResultCallback : public btCollisionWorld::ClosestRayResultCallback
+	{
+		btScalar m_minDistSq;
+		MinDistRayResultCallback(const btVector3& from, const btVector3& to, const btCollisionObject* ignoreObj, btScalar minDistSq)
+			: ClosestRayResultCallback(from, to, ignoreObj), m_minDistSq(minDistSq) {}
+
+		virtual btScalar addSingleResult(btCollisionWorld::LocalRayResult& rayResult, bool normalInWorldSpace)
+		{
+			btVector3 hitPoint;
+			hitPoint.setInterpolate3(m_rayFromWorld, m_rayToWorld, rayResult.m_hitFraction);
+			if ((hitPoint - m_rayFromWorld).length2() < m_minDistSq)
+				return m_closestHitFraction;
+			return ClosestRayResultCallback::addSingleResult(rayResult, normalInWorldSpace);
+		}
+	};
+	MinDistRayResultCallback rayCallback(from, to, ignoreObj, m_minHitDistSq);
 	rayCallback.m_collisionFilterGroup = btBroadphaseProxy::CharacterFilter | addedFilterMask;
 	rayCallback.m_collisionFilterMask = btBroadphaseProxy::AllFilter;
 

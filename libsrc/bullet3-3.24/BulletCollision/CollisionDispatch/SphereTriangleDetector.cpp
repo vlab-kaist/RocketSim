@@ -138,108 +138,63 @@ bool SphereTriangleDetector::facecontains(const btVector3& p, const btVector3* v
 
 bool SphereTriangleDetector::collide(const btVector3& sphereCenter, btVector3& point, btVector3& resultNormal, btScalar& depth, btScalar& timeOfImpact, btScalar contactBreakingThreshold)
 {
+	// RocketSim: sphere-triangle contact as in the game (and RocketSim v3): only the front face
+	// touches, the face test uses the edge normals, and outside the face the nearest of the three
+	// edges is the contact
 	const btVector3* vertices = &m_triangle->getVertexPtr(0);
 
 	btScalar radius = m_sphere->getRadius();
 	btScalar radiusWithThreshold = radius + contactBreakingThreshold;
+	btScalar radiusWithThresholdSqr = radiusWithThreshold * radiusWithThreshold;
 
 	btVector3 normal = (vertices[1] - vertices[0]).cross(vertices[2] - vertices[0]);
-
 	btScalar l2 = normal.length2();
-	bool hasContact = false;
+	if (l2 < SIMD_EPSILON * SIMD_EPSILON)
+		return false;
+	normal /= btSqrt(l2);
+
+	btVector3 objToPoints[3] = { sphereCenter - vertices[0], sphereCenter - vertices[1], sphereCenter - vertices[2] };
+	btScalar distanceFromPlane = objToPoints[0].dot(normal);
+	if (distanceFromPlane < 0 || distanceFromPlane >= radiusWithThreshold)
+		return false;
+
+	bool faceContains =
+		(vertices[1] - vertices[0]).cross(objToPoints[0]).dot(normal) >= 0 &&
+		(vertices[2] - vertices[1]).cross(objToPoints[1]).dot(normal) >= 0 &&
+		(vertices[0] - vertices[2]).cross(objToPoints[2]).dot(normal) >= 0;
+
 	btVector3 contactPoint;
-
-	if (l2 >= SIMD_EPSILON * SIMD_EPSILON)
-	{
-		normal /= btSqrt(l2);
-
-		btVector3 p1ToCentre = sphereCenter - vertices[0];
-		btScalar distanceFromPlane = p1ToCentre.dot(normal);
-
-		if (distanceFromPlane < btScalar(0.))
-		{
-			//triangle facing the other way
-			distanceFromPlane *= btScalar(-1.);
-			normal *= btScalar(-1.);
-		}
-
-		bool isInsideContactPlane = distanceFromPlane < radiusWithThreshold;
-
-		// Check for contact / intersection
-
-		if (isInsideContactPlane)
-		{
-			if (facecontains(sphereCenter, vertices, normal))
-			{
-				// Inside the contact wedge - touches a point on the shell plane
-				hasContact = true;
-				contactPoint = sphereCenter - normal * distanceFromPlane;
-			}
-			else
-			{
-				// Could be inside one of the contact capsules
-				btScalar contactCapsuleRadiusSqr = radiusWithThreshold * radiusWithThreshold;
-				btScalar minDistSqr = contactCapsuleRadiusSqr;
-
-#if 0 // Bullet's method
-				btVector3 nearestOnEdge;
-				for (int i = 0; i < 3; i++)
-				{
-					btVector3 pa;
-					btVector3 pb;
-
-					m_triangle->getEdge(i, pa, pb);
-
-					btScalar distanceSqr = SegmentSqrDistance(pa, pb, sphereCenter, nearestOnEdge);
-					if (distanceSqr < minDistSqr)
-					{
-						// Yep, we're inside a capsule, and record the capsule with smallest distance
-						minDistSqr = distanceSqr;
-						hasContact = true;
-						contactPoint = nearestOnEdge;
-					}
-				}
-#else // Faster method (thanks VirxEC)
-				// https://github.com/VirxEC/rl_ball_sym/blob/99b50b381cd529e567c9a33ab10464b89484227a/src/simulation/geometry.rs
-				btVector3 nearestOnEdge = closestPointTriangle(sphereCenter, vertices[0], vertices[1], vertices[2]);
-				btScalar distanceSqr = nearestOnEdge.distance2(sphereCenter);
-				if (distanceSqr < minDistSqr) {
-					minDistSqr = distanceSqr;
-					hasContact = true;
-					contactPoint = nearestOnEdge;
-				}
-#endif
+	if (faceContains) {
+		contactPoint = sphereCenter - normal * distanceFromPlane;
+	} else {
+		btScalar minDistSqr = radiusWithThresholdSqr;
+		for (int i = 0; i < 3; i++) {
+			btVector3 nearestOnEdge;
+			btScalar distanceSqr = SegmentSqrDistance(vertices[i], vertices[(i + 1) % 3], sphereCenter, nearestOnEdge);
+			if (distanceSqr < minDistSqr) {
+				minDistSqr = distanceSqr;
+				contactPoint = nearestOnEdge;
 			}
 		}
-
+		if (!(minDistSqr < radiusWithThresholdSqr))
+			return false;
 	}
 
-	if (hasContact)
-	{
-		btVector3 contactToCentre = sphereCenter - contactPoint;
-		btScalar distanceSqr = contactToCentre.length2();
+	btVector3 contactToCentre = sphereCenter - contactPoint;
+	btScalar distanceSqr = contactToCentre.length2();
+	if (distanceSqr >= radiusWithThresholdSqr)
+		return false;
 
-		if (distanceSqr < radiusWithThreshold * radiusWithThreshold)
-		{
-			if (distanceSqr > SIMD_EPSILON)
-			{
-				btScalar distance = btSqrt(distanceSqr);
-				resultNormal = contactToCentre;
-				resultNormal.normalize();
-				point = contactPoint;
-				depth = -(radius - distance);
-			}
-			else
-			{
-				resultNormal = normal;
-				point = contactPoint;
-				depth = -radius;
-			}
-			return true;
-		}
+	if (distanceSqr > SIMD_EPSILON) {
+		btScalar distance = btSqrt(distanceSqr);
+		resultNormal = contactToCentre * (1 / distance);
+		depth = -(radius - distance);
+	} else {
+		resultNormal = normal;
+		depth = -radius;
 	}
-
-	return false;
+	point = contactPoint;
+	return true;
 }
 
 bool SphereTriangleDetector::pointInTriangle(const btVector3 vertices[], const btVector3& normal, btVector3* p)

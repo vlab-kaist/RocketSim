@@ -244,8 +244,9 @@ void Ball::_OnHit(
 ) {
 	using namespace RLConst;
 
-	auto carState = car->GetState();
-	auto ballState = GetState();
+	// As in the game, the extra impulse reads both bodies as they were at the start of the tick
+	const CarState& carState = car->_tickStartState;
+	const BallState& ballState = _tickStartState;
 
 	// Override friction/restitution
 	outFriction = CARBALL_COLLISION_FRICTION;
@@ -270,7 +271,7 @@ void Ball::_OnHit(
 	if ((tickCount > ballHitInfo.tickCountWhenExtraImpulseApplied + 1) || (ballHitInfo.tickCountWhenExtraImpulseApplied > tickCount)) {
 		// Apply extra hit impulse
 		ballHitInfo.tickCountWhenExtraImpulseApplied = tickCount;
-		Vec carForward = car->GetForwardDir();
+		Vec carForward = carState.rotMat.forward.Normalized();
 		Vec relPos = ballState.pos - carState.pos;
 		Vec relVel = ballState.vel - carState.vel;
 

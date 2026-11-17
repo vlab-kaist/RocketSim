@@ -24,6 +24,10 @@ class btDefaultVehicleRaycaster : public btVehicleRaycaster
 public:
 	btDynamicsWorld* m_dynamicsWorld;
 
+	// RocketSim: hits closer than this (squared) to the ray start are ignored, so that a
+	// graze off the contact patch does not hide a farther hit on the same ray
+	btScalar m_minHitDistSq = 0;
+
 	btDefaultVehicleRaycaster() {}
 
 	btDefaultVehicleRaycaster(btDynamicsWorld* world)

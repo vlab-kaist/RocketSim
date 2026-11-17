@@ -45,6 +45,11 @@ struct CarState : public PhysState {
 	Vec flipRelTorque = { 0, 0, 0 };
 
 	float jumpTime = 0; // When currently jumping, the time since we started jumping, else 0
+
+	// Ticks since the jump started (or since it ended), and whether the jump button was released during it
+	// Not serialized
+	uint32_t jumpTicks = 0;
+	bool jumpHoldBroken = false;
 	float flipTime = 0; // When currently flipping, the time since we started flipping, else 0
 
 	// True during a flip (not an auto-flip, and not after a flip)
@@ -185,7 +190,15 @@ public:
 	void _PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig);
 
 	Vec _velocityImpulseCache = { 0,0,0 };
+
+	// State at the start of the current tick (after quantization), which the bump and demo rules read
+	CarState _tickStartState;
+
+	// Tick and car that last demolished this car (the victim of a demo can still demo back on that tick)
+	uint64_t _demoTick = UINT64_MAX;
+	uint32_t _demoerID = 0;
 	void _FinishPhysicsTick(const MutatorConfig& mutatorConfig);
+	void _ApplyFlipZDamp();
 
 	void _BulletSetup(GameMode gameMode, class btDynamicsWorld* bulletWorld, const MutatorConfig& mutatorConfig);
 	
@@ -202,10 +215,14 @@ public:
 
 private:
 	void _UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int numWheelsInContact, float forwardSpeed_UU);
+	void _UpdateWheelFriction();
+	void _UpdateWheelContacts(bool trace);
+	float _realThrottle = 0;
 	void _UpdateBoost(float tickTime, const MutatorConfig& mutatorConfig, float forwardSpeed_UU);
 	void _UpdateJump(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed);
-	void _UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, bool doAirControl);
-	void _UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed, float forwardSpeed_UU);
+	void _UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, int numWheelsInContact, bool prevIsFlipping, float prevFlipTime);
+	bool _UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed, float forwardSpeed_UU, bool wasIsJumping);
+	void _LimitVels();
 	void _UpdateAutoFlip(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed);
 	void _UpdateAutoRoll(float tickTime, const MutatorConfig& mutatorConfig, int numWheelsInContact);
 

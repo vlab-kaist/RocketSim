@@ -9,6 +9,10 @@
 #include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btDefaultCollisionConfiguration.h"
 #include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btInternalEdgeUtility.h"
 #include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btBoxShape.h"
+#include "../../../libsrc/bullet3-3.24/LinearMath/btTransformUtil.h"
+#include "../../../libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btGjkEpaPenetrationDepthSolver.h"
+#include "../../../libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btVoronoiSimplexSolver.h"
+#include "../../../libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btContinuousConvexCollision.h"
 #include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btSphereShape.h"
 #include "DropshotTiles/DropshotTiles.h"
 
@@ -342,6 +346,242 @@ void Arena::_BtCallback_OnCarBallCollision(Car* car, Ball* ball, btManifoldPoint
 	ball->_OnHit(car, relBallPos, manifoldPoint.m_combinedFriction, manifoldPoint.m_combinedRestitution, gameMode, _mutatorConfig, tickCount, this, _ballTouchCallback.func, _ballTouchCallback.userInfo);
 }
 
+// Physics state quantization at the start of each tick, ported from RocketSim v3 (rocketsim/src/sim/quantize.rs)
+namespace Quantize {
+	static float RoundPosition(float v, float scale) {
+		return floorf(v * scale + 0.5f) * (1 / scale);
+	}
+
+	// Truncates towards zero, then nudges a tenth of a step away from zero
+	static float RoundVelocity(float v, float scale) {
+		float invScale = 1 / scale;
+		float scaled = v * scale;
+		float rounded = (fabsf(scaled) < 2147483648.f) ? truncf(scaled) * invScale : (float)(int32_t)scaled * invScale;
+		float sign = (rounded > 0) ? 1.f : ((rounded < 0) ? -1.f : 0.f);
+		return rounded + sign * (0.1f * invScale);
+	}
+
+	static btVector3 RoundVec(const btVector3& v, float scale, bool isVelocity) {
+		btVector3 out;
+		for (int i = 0; i < 3; i++)
+			out[i] = isVelocity ? RoundVelocity(v[i], scale) : RoundPosition(v[i], scale);
+		return out;
+	}
+
+	struct Quat { float x, y, z, w; };
+
+	static Quat Normalize(Quat q, float minLenSq) {
+		float lenSq = ((q.x * q.x + q.y * q.y) + q.z * q.z) + q.w * q.w;
+		if (!(lenSq > minLenSq))
+			return { 0, 0, 0, 1 };
+		float s = 1 / sqrtf(lenSq);
+		return { q.x * s, q.y * s, q.z * s, q.w * s };
+	}
+
+	// Basis columns are forward, right, up
+	static Quat FromBasis(const btMatrix3x3& m) {
+		float m00 = m[0][0], m01 = m[0][1], m02 = m[0][2];
+		float m10 = m[1][0], m11 = m[1][1], m12 = m[1][2];
+		float m20 = m[2][0], m21 = m[2][1], m22 = m[2][2];
+		float trace = (m00 + m11) + m22;
+		if (trace > 0) {
+			float s = sqrtf(trace + 1);
+			float w = s * 0.5f;
+			s = 0.5f / s;
+			return { (m21 - m12) * s, (m02 - m20) * s, (m10 - m01) * s, w };
+		}
+		if (m00 < m11 ? m11 < m22 : m00 < m22) {
+			float s = sqrtf(((m22 - m00) - m11) + 1);
+			float z = s * 0.5f;
+			s = 0.5f / s;
+			return { (m02 + m20) * s, (m12 + m21) * s, z, (m10 - m01) * s };
+		}
+		if (m00 < m11) {
+			float s = sqrtf(((m11 - m22) - m00) + 1);
+			float y = s * 0.5f;
+			s = 0.5f / s;
+			return { (m01 + m10) * s, y, (m21 + m12) * s, (m02 - m20) * s };
+		}
+		float s = sqrtf(((m00 - m11) - m22) + 1);
+		float x = s * 0.5f;
+		s = 0.5f / s;
+		return { x, (m01 + m10) * s, (m02 + m20) * s, (m21 - m12) * s };
+	}
+
+	static btMatrix3x3 ToBasis(const Quat& q) {
+		float d = ((q.x * q.x + q.y * q.y) + q.z * q.z) + q.w * q.w;
+		float s = 2 / d;
+		float xs = q.x * s, ys = q.y * s, zs = q.z * s;
+		float wx = q.w * xs, wy = q.w * ys, wz = q.w * zs;
+		float xx = q.x * xs, xy = q.x * ys, xz = q.x * zs;
+		float yy = q.y * ys, yz = q.y * zs, zz = q.z * zs;
+		return btMatrix3x3(
+			1 - (yy + zz), xy - wz, xz + wy,
+			xy + wz, 1 - (xx + zz), yz - wx,
+			xz - wy, yz + wx, 1 - (xx + yy)
+		);
+	}
+
+	static float QuantizeComponent(float c) {
+		constexpr int MAX = (1 << 18) - 1;
+		float maxF = (float)MAX;
+		float v = ((c * 1.41421356f) * 0.5f + 0.5f) * maxF;
+		v = (v + v) + 0.5f;
+		int k = RS_CLAMP(((int)nearbyintf(v)) >> 1, 0, MAX);
+		float r = k / maxF - 0.5f;
+		return (r + r) * 0.70710677f;
+	}
+
+	// Smallest-three encoding: the largest component is dropped and rebuilt from the others
+	static Quat QuantizeRotation(Quat in) {
+		Quat q = Normalize(in, 1e-8f);
+		float c[4] = { q.x, q.y, q.z, q.w };
+		float a[4] = { fabsf(c[0]), fabsf(c[1]), fabsf(c[2]), fabsf(c[3]) };
+		int i01 = (a[0] < a[1]) ? 1 : 0;
+		int i23 = (a[2] < a[3]) ? 3 : 2;
+		int big = (a[i01] >= a[i23]) ? i01 : i23;
+		float sign = (c[big] < 0) ? -1.f : 1.f;
+
+		float d[3];
+		for (int i = 0, n = 0; i < 4; i++)
+			if (i != big)
+				d[n++] = QuantizeComponent(c[i] * sign);
+
+		float rest = ((1 - d[0] * d[0]) - d[1] * d[1]) - d[2] * d[2];
+		float o[4];
+		for (int i = 0, n = 0; i < 4; i++)
+			o[i] = (i == big) ? sqrtf(RS_MAX(rest, 0.f)) : d[n++];
+		return Normalize({ o[0], o[1], o[2], o[3] }, 1e-8f);
+	}
+
+	// The game sends analog inputs as bytes: negatives in steps of 1/128, positives in steps of 1/127
+	static float QuantizeAxisInput(float x) {
+		float clamped = RS_CLAMP(x, -1.f, 1.f);
+		float y = (clamped < 0) ? RS_MAX(clamped * 128.f, -128.f) : RS_MIN(clamped * 127.f, 127.f);
+		float w = ((y + 128.f) + (y + 128.f)) + 0.5f;
+		int byte = (((int)nearbyintf(w)) >> 1) & 0xFF;
+		float s = (float)byte - 128.f;
+		return (byte < 0x80) ? (s * (1.f / 128.f)) : (s / 127.f);
+	}
+
+	static void QuantizeControls(CarControls& c) {
+		c.throttle = QuantizeAxisInput(c.throttle);
+		c.steer = QuantizeAxisInput(c.steer);
+		c.pitch = QuantizeAxisInput(c.pitch);
+		c.yaw = QuantizeAxisInput(c.yaw);
+		c.roll = QuantizeAxisInput(c.roll);
+	}
+
+	static void QuantizeBody(btRigidBody& rb, bool quantizeRotation) {
+		btTransform trans = rb.getWorldTransform();
+		trans.setOrigin(RoundVec(trans.getOrigin() * BT_TO_UU, 100, false) * UU_TO_BT);
+		if (quantizeRotation)
+			trans.setBasis(ToBasis(QuantizeRotation(FromBasis(trans.getBasis()))));
+		rb.setWorldTransform(trans);
+		rb.setInterpolationWorldTransform(trans);
+		rb.setLinearVelocity(RoundVec(rb.getLinearVelocity() * BT_TO_UU, 100, true) * UU_TO_BT);
+		rb.setAngularVelocity(RoundVec(rb.getAngularVelocity(), 10000, true));
+	}
+}
+
+// Bump and demolition rules, ported from RocketSim v3 (rocketsim/src/sim/arena/bump_demo.rs),
+// which matched them against recordings of the real game
+namespace BumpDemo {
+	// Victim hitbox origin as the game computes it: each component is the local offset projected on one body axis
+	static Vec HitboxOrigin(const Vec& pos, const RotMat& rot, const Vec& offset) {
+		return pos + Vec(rot.forward.Dot(offset), rot.right.Dot(offset), rot.up.Dot(offset));
+	}
+
+	static Vec NormalizeForCone(const Vec& v) {
+		float lenSq = v.LengthSq();
+		if (lenSq == 1)
+			return v;
+		if (lenSq < 1e-8f)
+			return Vec(0, 0, 0);
+		return v * (1 / sqrtf(lenSq));
+	}
+
+	// True if the victim's hitbox origin is inside the attacker's forward cone (pitch is tested first)
+	static bool IsWithinForwardCone(
+		const CarState& attacker, const CarConfig& attackerConfig, const CarState& victim, const CarConfig& victimConfig,
+		bool reverse, float maxYawDeg, float maxPitchDeg) {
+		constexpr float PROJECTION_SCALE = 1.01f, RAD_TO_DEG = 57.29578f;
+
+		Vec attackerOrigin = HitboxOrigin(attacker.pos, attacker.rotMat, attackerConfig.hitboxPosOffset);
+		Vec victimOrigin = HitboxOrigin(victim.pos, victim.rotMat, victimConfig.hitboxPosOffset);
+		Vec delta = NormalizeForCone(victimOrigin - attackerOrigin);
+		Vec forward = reverse ? -attacker.rotMat.forward : attacker.rotMat.forward;
+
+		auto angleDeg = [&](const Vec& axis) {
+			float remove = delta.Dot(axis);
+			remove = (remove >= 0) ? (remove / PROJECTION_SCALE) : (remove * PROJECTION_SCALE);
+			Vec projected = NormalizeForCone(delta - axis * remove);
+			return acosf(RS_CLAMP(forward.Dot(projected), -1.f, 1.f)) * RAD_TO_DEG;
+		};
+
+		if (angleDeg(attacker.rotMat.right) > maxPitchDeg)
+			return false;
+		return angleDeg(attacker.rotMat.up) <= maxYawDeg;
+	}
+
+	static btTransform ToBtTransform(const CarState& state) {
+		return btTransform((btMatrix3x3)state.rotMat, state.pos * UU_TO_BT);
+	}
+
+	// Moves both cars to where their hitboxes first touch when swept over [-tickTime, tickTime]
+	// around their current state. Leaves them unchanged if the sweep finds no impact.
+	static void TimeOfImpactPoses(CarState& a, const CarConfig& aConfig, CarState& b, const CarConfig& bConfig, float tickTime) {
+		auto halfExtents = [](const CarConfig& config) {
+			Vec published = config.hitboxSize - Vec(2.5f, 2.5f, 2.5f);
+			Vec halfWithMargin = published * 0.02f * 0.5f + Vec(0.025f, 0.025f, 0.025f);
+			return (halfWithMargin * 50.f * 2.f) * 0.5f * UU_TO_BT;
+		};
+		btBoxShape boxA(halfExtents(aConfig)), boxB(halfExtents(bConfig));
+
+		btTransform fromA, toA, fromB, toB;
+		btTransformUtil::integrateTransform(ToBtTransform(a), -a.vel * UU_TO_BT, -a.angVel, tickTime, fromA);
+		btTransformUtil::integrateTransform(ToBtTransform(a), a.vel * UU_TO_BT, a.angVel, tickTime, toA);
+		btTransformUtil::integrateTransform(ToBtTransform(b), -b.vel * UU_TO_BT, -b.angVel, tickTime, fromB);
+		btTransformUtil::integrateTransform(ToBtTransform(b), b.vel * UU_TO_BT, b.angVel, tickTime, toB);
+
+		auto hitbox = [](const btTransform& t, const CarConfig& config) {
+			return btTransform(t.getBasis(), t * (btVector3)(config.hitboxPosOffset * UU_TO_BT));
+		};
+
+		btVoronoiSimplexSolver simplexSolver;
+		btGjkEpaPenetrationDepthSolver penetrationSolver;
+		btContinuousConvexCollision toi(&boxA, &boxB, &simplexSolver, &penetrationSolver);
+		btConvexCast::CastResult result;
+		if (!toi.calcTimeOfImpact(hitbox(fromA, aConfig), hitbox(toA, aConfig), hitbox(fromB, bConfig), hitbox(toB, bConfig), result))
+			return;
+		float fraction = result.m_fraction;
+		if (!(fraction < 1))
+			return;
+
+		auto pose = [&](CarState& state, const btTransform& from, const btTransform& to) {
+			state.pos = (from.getOrigin() + (to.getOrigin() - from.getOrigin()) * fraction) * BT_TO_UU;
+			btQuaternion rot = from.getRotation().slerp(to.getRotation(), fraction).normalized();
+			state.rotMat = btMatrix3x3(rot);
+		};
+		pose(a, fromA, toA);
+		pose(b, fromB, toB);
+	}
+
+	static bool ShouldDemolish(const CarState& attacker, const CarConfig& attackerConfig, const CarState& victim, const CarConfig& victimConfig, float tickTime) {
+		using namespace RLConst;
+		if (!attacker.isSupersonic)
+			return false;
+
+		float forwardSpeed = attacker.vel.Dot(attacker.rotMat.forward);
+		if (abs(forwardSpeed) < SUPERSONIC_MAINTAIN_MIN_SPEED)
+			return false;
+
+		CarState attackerPose = attacker, victimPose = victim;
+		TimeOfImpactPoses(attackerPose, attackerConfig, victimPose, victimConfig, tickTime);
+		return IsWithinForwardCone(attackerPose, attackerConfig, victimPose, victimConfig, forwardSpeed < 0, DEMO_YAW_LIMIT_DEG, DEMO_PITCH_LIMIT_DEG);
+	}
+}
+
 void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint& manifoldPoint) {
 	using namespace RLConst;
 
@@ -356,76 +596,94 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 		if (isSwapped)
 			std::swap(car1, car2);
 
+		// As in the game, the rules read the cars as they were at the start of the tick,
+		// except for the demolition and cooldown flags, which can change during it
 		CarState
-			state = car1->GetState(),
-			otherState = car2->GetState();
+			state = car1->_tickStartState,
+			otherState = car2->_tickStartState;
+		state.isDemoed = car1->_internalState.isDemoed;
+		otherState.isDemoed = car2->_internalState.isDemoed;
+		state.carContact = car1->_internalState.carContact;
 
-		if (state.isDemoed || otherState.isDemoed)
-			return;
-
-		if ((state.carContact.otherCarID == car2->id) && (state.carContact.cooldownTimer > 0))
-			continue; // In cooldown
+		// A car demolished by the other car earlier in this tick can still demolish it, but not bump it
+		bool mayBump = true;
+		if (state.isDemoed || otherState.isDemoed) {
+			bool demoedByVictimThisTick = car1->_demoTick == tickCount && car1->_demoerID == car2->id;
+			if (otherState.isDemoed || !demoedByVictimThisTick)
+				continue;
+			mayBump = false;
+		}
 
 		Vec deltaPos = (otherState.pos - state.pos);
-		if (state.vel.Dot(deltaPos) > 0) { // Going towards other car
+		if (state.vel.Dot(deltaPos) < 0)
+			continue; // Moving away from the other car
 
-			Vec velDir = state.vel.Normalized();
-			Vec dirToOtherCar = deltaPos.Normalized();
+		Vec velDir = state.vel.Normalized();
+		Vec dirToOtherCar = deltaPos.Normalized();
 
-			float speedTowardsOtherCar = state.vel.Dot(dirToOtherCar);
-			float otherCarAwaySpeed = otherState.vel.Dot(dirToOtherCar);
+		float speedTowardsOtherCar = state.vel.Dot(dirToOtherCar);
+		float otherCarAwaySpeed = otherState.vel.Dot(velDir);
+		if (speedTowardsOtherCar <= otherCarAwaySpeed)
+			continue; // Going towards the other car slower than it is going away
 
-			if (speedTowardsOtherCar > otherCarAwaySpeed) { // Going towards other car faster than they are going away
+		// The game bumps only when the other car's hitbox center is in the bumper's forward cone
+		bool hitWithBumper = BumpDemo::IsWithinForwardCone(state, car1->config, otherState, car2->config, false, BUMP_YAW_LIMIT_DEG, BUMP_PITCH_LIMIT_DEG);
 
-				Vec localPoint = isSwapped ? manifoldPoint.m_localPointB : manifoldPoint.m_localPointA;
-				bool hitWithBumper = (localPoint.x * BT_TO_UU) > BUMP_MIN_FORWARD_DIST;
-				if (hitWithBumper) {
-
-					bool isDemo;
-					switch (_mutatorConfig.demoMode) {
-					case DemoMode::ON_CONTACT:
-						isDemo = true; // BOOM
-						break;
-					case DemoMode::DISABLED:
-						isDemo = false;
-						break;
-					default:
-						if (dirToOtherCar.Dot(velDir)>(std::sqrt(2.0) / 2.0)){
-							isDemo = state.isSupersonic;
-						}
-						break;
-					}
-
-					if (isDemo && !_mutatorConfig.enableTeamDemos)
-						isDemo = car1->team != car2->team;
-
-					if (isDemo) {
-						car2->Demolish(_mutatorConfig.respawnDelay);
-					} else {
-						bool groundHit = car2->_internalState.isOnGround;
-
-						float baseScale =
-							(groundHit ? BUMP_VEL_AMOUNT_GROUND_CURVE : BUMP_VEL_AMOUNT_AIR_CURVE).GetOutput(speedTowardsOtherCar);
-
-						Vec hitUpDir =
-							(otherState.isOnGround ? (Vec)car2->GetUpDir() : Vec(0, 0, 1));
-
-						Vec bumpImpulse =
-							velDir * baseScale +
-							hitUpDir * BUMP_UPWARD_VEL_AMOUNT_CURVE.GetOutput(speedTowardsOtherCar)
-							* _mutatorConfig.bumpForceScale;
-
-						car2->_velocityImpulseCache += bumpImpulse * UU_TO_BT;
-					}
-
-					car1->_internalState.carContact.otherCarID = car2->id;
-					car1->_internalState.carContact.cooldownTimer = _mutatorConfig.bumpCooldownTime;
-
-					if (_carBumpCallback.func)
-						_carBumpCallback.func(this, car1, car2, isDemo, _carBumpCallback.userInfo);
-				}
-			}
+		// Demolitions are checked before the bump cooldown
+		bool isDemo;
+		switch (_mutatorConfig.demoMode) {
+		case DemoMode::ON_CONTACT:
+			isDemo = true; // BOOM
+			break;
+		case DemoMode::DISABLED:
+			isDemo = false;
+			break;
+		default:
+			isDemo = BumpDemo::ShouldDemolish(state, car1->config, otherState, car2->config, tickTime);
+			break;
 		}
+
+		if (isDemo && !_mutatorConfig.enableTeamDemos)
+			isDemo = car1->team != car2->team;
+
+		if (isDemo) {
+			car2->Demolish(_mutatorConfig.respawnDelay);
+			car2->_demoTick = tickCount;
+			car2->_demoerID = car1->id;
+
+			if (_carBumpCallback.func)
+				_carBumpCallback.func(this, car1, car2, true, _carBumpCallback.userInfo);
+			continue;
+		}
+
+		if (!mayBump)
+			continue;
+
+		if ((state.carContact.otherCarID == car2->id) && (state.carContact.cooldownTimer > 0))
+			continue; // In cooldown for this victim
+
+		if (hitWithBumper) {
+			float attackerSpeed = RS_MIN(state.vel.Length(), 2200.f);
+			Vec bumpImpulse;
+			if (car2->_internalState.isOnGround) {
+				bumpImpulse =
+					velDir * BUMP_VEL_AMOUNT_GROUND_CURVE.GetOutput(attackerSpeed) +
+					otherState.rotMat.up * BUMP_UPWARD_VEL_AMOUNT_CURVE.GetOutput(attackerSpeed);
+			} else {
+				// No upward push on an airborne victim
+				bumpImpulse = velDir * BUMP_VEL_AMOUNT_AIR_CURVE.GetOutput(attackerSpeed);
+			}
+
+			car2->_velocityImpulseCache += bumpImpulse * _mutatorConfig.bumpForceScale * UU_TO_BT;
+		}
+
+		// The game's next bump needs the physics time strictly past the cooldown, so half a tick longer.
+		// The cooldown also starts on contacts that did not bump.
+		car1->_internalState.carContact.otherCarID = car2->id;
+		car1->_internalState.carContact.cooldownTimer = _mutatorConfig.bumpCooldownTime + tickTime * 0.5f;
+
+		if (hitWithBumper && _carBumpCallback.func)
+			_carBumpCallback.func(this, car1, car2, false, _carBumpCallback.userInfo);
 	}
 }
 
@@ -498,6 +756,10 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
 		auto& solverInfo = _bulletWorld.getSolverInfo();
 		solverInfo.m_splitImpulsePenetrationThreshold = 1.0e30f;
 		solverInfo.m_erp2 = 0.8f;
+		// Only the wheel pushback (resolveSingleCollision) reads m_erp, as there are no joint constraints
+		solverInfo.m_erp = 0.1f;
+		// Restitution applies at any approach speed (slow contacts, like a rolling ball, still bounce)
+		solverInfo.m_restitutionVelocityThreshold = 0;
 	}
 
 	bool loadArenaStuff = gameMode != GameMode::THE_VOID;
@@ -723,6 +985,19 @@ void Arena::Step(int ticksToSimulate) {
 
 		_bulletWorld.setWorldUserInfo(this);
 
+		if (_config.quantizePhysics) {
+			for (Car* car : _cars) {
+				Quantize::QuantizeControls(car->controls);
+				Quantize::QuantizeBody(car->_rigidBody, true);
+				car->_internalState.rotMat = car->_rigidBody.getWorldTransform().getBasis();
+			}
+			Quantize::QuantizeBody(ball->_rigidBody, !_config.noBallRot || gameMode == GameMode::SNOWDAY);
+		}
+
+		for (Car* car : _cars)
+			car->_tickStartState = car->GetState();
+		ball->_tickStartState = ball->GetState();
+
 		{ // Ball zero-vel sleeping
 			if (ball->_rigidBody.m_linearVelocity.length2() == 0 && ball->_rigidBody.m_angularVelocity.length2() == 0) {
 				ball->_rigidBody.setActivationState(ISLAND_SLEEPING);
@@ -735,6 +1010,10 @@ void Arena::Step(int ticksToSimulate) {
 
 		bool hasArenaStuff = (gameMode != GameMode::THE_VOID);
 		
+		// Flip damping goes first so that other cars' wheels see the damped velocity
+		for (Car* car : _cars)
+			car->_ApplyFlipZDamp();
+
 		for (Car* car : _cars)
 			car->_PreTickUpdate(gameMode, tickTime, _mutatorConfig);
 

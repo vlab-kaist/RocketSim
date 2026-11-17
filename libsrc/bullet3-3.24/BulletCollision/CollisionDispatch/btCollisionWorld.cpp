@@ -184,6 +184,10 @@ void btCollisionWorld::updateAabbs()
 		btCollisionObject* colObj = m_collisionObjects[i];
 		btAssert(colObj->getWorldArrayIndex() == i);
 
+		// RocketSim: static objects never move, so their aabb is only set when they are added
+		if (colObj->isStaticObject())
+			continue;
+
 		//only update aabb of active objects
 		if (m_forceUpdateAllAabbs || colObj->isActive())
 		{
@@ -268,14 +272,16 @@ void btCollisionWorld::rayTestSingleInternal(const btTransform& rayFromTrans, co
 											 const btCollisionObjectWrapper* collisionObjectWrap,
 											 RayResultCallback& resultCallback)
 {
-	btSphereShape pointShape(btScalar(0.0));
-	pointShape.setMargin(0.f);
-	const btConvexShape* castShape = &pointShape;
 	const btCollisionShape* collisionShape = collisionObjectWrap->getCollisionShape();
 	const btTransform& colObjWorldTransform = collisionObjectWrap->getWorldTransform();
 
 	if (collisionShape->isConvex())
 	{
+		// RocketSim: only the convex case casts a point shape, so only build it here
+		btSphereShape pointShape(btScalar(0.0));
+		pointShape.setMargin(0.f);
+		const btConvexShape* castShape = &pointShape;
+
 		//		BT_PROFILE("rayTestConvex");
 		btConvexCast::CastResult castResult;
 		castResult.m_fraction = resultCallback.m_closestHitFraction;
@@ -384,6 +390,18 @@ void btCollisionWorld::rayTestSingleInternal(const btTransform& rayFromTrans, co
 
 				btVector3 rayFromLocal = worldTocollisionObject * rayFromTrans.getOrigin();
 				btVector3 rayToLocal = worldTocollisionObject * rayToTrans.getOrigin();
+
+				// RocketSim: a ray that stays clearly on one side of a plane cannot hit it. The plane
+				// is otherwise tested as two huge triangles, which would reject such a ray as well.
+				if (collisionShape->getShapeType() == STATIC_PLANE_PROXYTYPE)
+				{
+					const btStaticPlaneShape* plane = (const btStaticPlaneShape*)collisionShape;
+					const btScalar tolerance = btScalar(1e-3);
+					btScalar distFrom = plane->getPlaneNormal().dot(rayFromLocal) - plane->getPlaneConstant();
+					btScalar distTo = plane->getPlaneNormal().dot(rayToLocal) - plane->getPlaneConstant();
+					if ((distFrom > tolerance && distTo > tolerance) || (distFrom < -tolerance && distTo < -tolerance))
+						return;
+				}
 
 				//ConvexCast::CastResult
 
@@ -933,6 +951,20 @@ struct btSingleRayCallback : public btBroadphaseRayCallback
 			const btVector3& collisionObjectAabbMax = collisionObject->getBroadphaseHandle()->m_aabbMax;
 #endif
 #endif
+			// RocketSim: the broadphase only sorts proxies into cells, so skip moving objects whose
+			// current bounds the ray's bounds don't touch (their broadphase aabb can be a tick old)
+			if (!collisionObject->isStaticObject())
+			{
+				btVector3 objMin, objMax;
+				collisionObject->getCollisionShape()->getAabb(collisionObject->getWorldTransform(), objMin, objMax);
+				const btVector3 pad(btScalar(1e-3), btScalar(1e-3), btScalar(1e-3));
+				btVector3 rayMin = m_rayFromWorld, rayMax = m_rayFromWorld;
+				rayMin.setMin(m_rayToWorld);
+				rayMax.setMax(m_rayToWorld);
+				if (!TestAabbAgainstAabb2(rayMin - pad, rayMax + pad, objMin, objMax))
+					return true;
+			}
+
 			//btScalar hitLambda = m_resultCallback.m_closestHitFraction;
 			//culling already done by broadphase
 			//if (btRayAabb(m_rayFromWorld,m_rayToWorld,collisionObjectAabbMin,collisionObjectAabbMax,hitLambda,m_hitNormal))

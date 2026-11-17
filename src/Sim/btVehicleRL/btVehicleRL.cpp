@@ -1,5 +1,6 @@
 #include "btVehicleRL.h"
 #include "../../RLConst.h"
+#include "../../BulletLink.h"
 #define ROLLING_INFLUENCE_FIX
 
 #include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btDynamicsWorld.h"
@@ -64,8 +65,14 @@ const btTransform& btVehicleRL::getWheelTransformWS(int wheelIndex) const {
 
 // See: I20 or I21
 void btVehicleRL::updateWheelTransform(int wheelIndex) {
+	updateWheelTransformsWS(m_wheelInfo[wheelIndex]);
+	updateWheelBasis(wheelIndex);
+}
+
+// Rebuilds the wheel's world transform (steering included) from the current
+// world-space wheel info, without touching the contact state
+void btVehicleRL::updateWheelBasis(int wheelIndex) {
 	btWheelInfoRL& wheel = m_wheelInfo[wheelIndex];
-	updateWheelTransformsWS(wheel);
 	btVector3 up = -wheel.m_raycastInfo.m_wheelDirectionWS;
 	const btVector3& right = wheel.m_raycastInfo.m_wheelAxleWS;
 	btVector3 fwd = up.cross(right);
@@ -73,7 +80,14 @@ void btVehicleRL::updateWheelTransform(int wheelIndex) {
 	//	up = right.cross(fwd);
 	//	up.normalize();
 
-	btQuaternion steeringOrn(up, wheel.m_steerAngle);
+	// Same as btQuaternion(up, m_steerAngle), with the trig only redone when the angle changes
+	if (wheel.m_steerAngle != wheel.m_cachedSteerAngle) {
+		wheel.m_cachedSteerAngle = wheel.m_steerAngle;
+		wheel.m_steerSinHalf = btSin(wheel.m_steerAngle * btScalar(0.5));
+		wheel.m_steerCosHalf = btCos(wheel.m_steerAngle * btScalar(0.5));
+	}
+	btScalar s = wheel.m_steerSinHalf / up.length();
+	btQuaternion steeringOrn(up.x() * s, up.y() * s, up.z() * s, wheel.m_steerCosHalf);
 	btMatrix3x3 steeringMat(steeringOrn);
 
 	btMatrix3x3 basis2;
@@ -123,7 +137,8 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
 	float depth = -1;
 
 	float suspensionTravel = wheel.m_maxSuspensionTravelCm / 100;
-	float realRayLength = wheel.getSuspensionRestLength() + suspensionTravel + wheel.m_wheelsRadius - RLConst::BTVehicle::SUSPENSION_SUBTRACTION;
+	// As in RocketSim v3, the ray is not shortened by SUSPENSION_SUBTRACTION (only the pushback threshold is)
+	float realRayLength = wheel.getSuspensionRestLength() + suspensionTravel + wheel.m_wheelsRadius;
 
 	// See: I21
 	btVector3 source = wheel.m_raycastInfo.m_hardPointWS;
@@ -151,15 +166,9 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
 		float wheelTraceLenSq = (wheel.m_raycastInfo.m_hardPointWS - wheel.m_raycastInfo.m_contactPointWS).dot(getUpVector());
 		wheel.m_raycastInfo.m_suspensionLength = wheelTraceLenSq - wheel.m_wheelsRadius;
 
-		//clamp on max suspension travel
-		float minSuspensionLen = wheel.getSuspensionRestLength() - suspensionTravel;
+		// Only the maximum suspension travel is clamped
 		float maxSuspensionLen = wheel.getSuspensionRestLength() + suspensionTravel;
-		wheel.m_raycastInfo.m_suspensionLength =
-			std::clamp(
-				wheel.m_raycastInfo.m_suspensionLength,
-				wheel.getSuspensionRestLength() - suspensionTravel,
-				wheel.getSuspensionRestLength() + suspensionTravel
-			);
+		wheel.m_raycastInfo.m_suspensionLength = RS_MIN(wheel.m_raycastInfo.m_suspensionLength, maxSuspensionLen);
 
 		float denominator = wheel.m_raycastInfo.m_contactNormalWS.dot(getUpVector());
 
@@ -178,7 +187,8 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
 			wheel.m_clippedInvContactDotSuspension = 10;
 		}
 
-		if (object->isStaticObject()) { // Compute m_extraPushback when colliding with static object
+		bool isCarHit = object->getUserIndex() == BT_USERINFO_TYPE_CAR;
+		if (object->isStaticObject() || isCarHit) { // Compute m_extraPushback when colliding with the world or another car
 			float rayPushbackThresh = (wheel.m_suspensionRestLength1 + wheel.m_wheelsRadius) - RLConst::BTVehicle::SUSPENSION_SUBTRACTION;
 			if (wheelTraceLenSq < rayPushbackThresh) {
 
@@ -194,6 +204,17 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
 				);
 
 				wheel.m_extraPushback = collisionResult / getNumWheels();
+			}
+		}
+
+		// Reactions on a dynamic body under the wheel (as in RocketSim v3), only in a real tick
+		if (!object->isStaticObject() && m_applyHitEffects) {
+			btRigidBody* hitBody = (btRigidBody*)btRigidBody::upcast(object);
+			if (hitBody) {
+				btVector3 hitOffset = wheel.m_raycastInfo.m_contactPointWS - hitBody->getWorldTransform().getOrigin();
+				if (isCarHit && wheel.m_extraPushback > 0)
+					hitBody->applyImpulse(-wheel.m_raycastInfo.m_contactNormalWS * (wheel.m_extraPushback * getNumWheels()), hitOffset);
+				hitBody->applyImpulse(-wheel.m_raycastInfo.m_contactNormalWS, hitOffset);
 			}
 		}
 
@@ -221,14 +242,20 @@ void btVehicleRL::updateVehicleFirst(float step) {
 	// simulate suspension
 	//
 
+	// A zero step only refreshes the contacts (after a state set) and must not push anything
+	m_applyHitEffects = step > 0;
 	for (int i = 0; i < m_wheelInfo.size(); i++)
 		rayCast(m_wheelInfo[i]);
-
-	calcFrictionImpulses(step);
 }
 
+// The friction impulses are determined here, after the car has set this tick's
+// steering, engine force and brake, so controls take effect on the tick they are given
 void btVehicleRL::updateVehicleSecond(float step) {
+	for (int i = 0; i < getNumWheels(); i++)
+		updateWheelBasis(i);
+
 	updateSuspension(step);
+	calcFrictionImpulses(step);
 	applyFrictionImpulses(step);
 }
 
@@ -313,23 +340,20 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
 
 		btRigidBody* groundObject = (btRigidBody*)wheel.m_raycastInfo.m_groundObject;
 		if (groundObject) {
-			// Axle direction (includes steering turn)
-			btVector3 axleDir = wheel.m_worldTransform.getBasis().getColumn(m_indexRightAxis);
+			// Axle direction (includes steering turn), not projected onto the contact plane
+			btVector3 axleDir = wheel.m_worldTransform.getBasis().getColumn(m_indexRightAxis).safeNormalized();
 
 			btVector3 surfNormalWS = wheel.m_raycastInfo.m_contactNormalWS;
-			float proj = axleDir.dot(surfNormalWS);
-			axleDir -= surfNormalWS * proj;
-			axleDir = axleDir.safeNormalized();
 
 			// Wheel forwards direction
 			btVector3 forwardDir = surfNormalWS.cross(axleDir).safeNormalized();
 
 			float sideImpulse;
 
-			// Get sideways friction force
+			// Get sideways friction force, always against a fixed ground (even on the ball or a car)
 			resolveSingleBilateral(
 				*m_chassisBody, wheel.m_raycastInfo.m_contactPointWS,
-				*groundObject, wheel.m_raycastInfo.m_contactPointWS,
+				getFixedBody(), wheel.m_raycastInfo.m_contactPointWS,
 				0,
 				axleDir,
 				sideImpulse,
@@ -340,15 +364,8 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
 			if (wheel.m_engineForce == 0) {
 				if (wheel.m_brake) {
 					// Simplified variation of calcRollingFriction()
-					btVector3 contactPoint = wheel.m_raycastInfo.m_contactPointWS;
-					btVector3 carRelContactPoint = contactPoint - m_chassisBody->getCenterOfMassPosition();
-					btVector3 groundObRelContactPoint = contactPoint - groundObject->getCenterOfMassPosition();
-
-					btVector3
-						v1 = m_chassisBody->getVelocityInLocalPoint(carRelContactPoint),
-						v2 = groundObject->getVelocityInLocalPoint(carRelContactPoint);
-					btVector3 contactVel = v1 - v2;
-					float relVel = contactVel.dot(forwardDir);
+					// Chassis velocity at the contact, from the wheel trace
+					float relVel = wheel.m_velAtContactPoint.dot(forwardDir);
 
 					// This will round off small rolling friction amounts when at sub-80 TPS to prevent stuttering (to an extent)
 					// TODO: Improve and clarify

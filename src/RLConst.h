@@ -54,10 +54,10 @@ namespace RLConst {
 		BALL_MAX_SPEED = 6000.f,
 
 		BOOST_MAX = 100.f,
-		BOOST_USED_PER_SECOND = BOOST_MAX / 3,
+		BOOST_USED_PER_SECOND = 33.3f, // The game uses 0.333 * 100, not BOOST_MAX / 3
 		BOOST_MIN_TIME = 0.1f, // Minimum time we can be boosting for
 		BOOST_ACCEL_GROUND = 2975/3.f, // uu/s for vel (on the ground)
-		BOOST_ACCEL_AIR = 3175/3.f, // uu/s for vel (airborne)
+		BOOST_ACCEL_AIR = BOOST_ACCEL_GROUND, // uu/s for vel (airborne, plus the full air throttle while boosting)
 		BOOST_SPAWN_AMOUNT = BOOST_MAX / 3,
 
 		RECHARGE_BOOST_PER_SECOND = 10, // Amount of boost recharged per second when recharging
@@ -87,7 +87,7 @@ namespace RLConst {
 		STOPPING_FORWARD_VEL = 25.f, // If we are costing with less than this forward vel, we full-brake
 		COASTING_BRAKE_FACTOR = 0.15f, // How much the brake is applied when costing
 		BRAKING_NO_THROTTLE_SPEED_THRESH = 0.01f, // If we are braking and moving faster than this, disable throttle
-		THROTTLE_DEADZONE = 0.001f, // Throttle input of less than this is ignored
+		THROTTLE_DEADZONE = 0.01f, // Throttle input of this or less is ignored
 		
 		THROTTLE_AIR_ACCEL = 200/3.f,
 
@@ -142,7 +142,11 @@ namespace RLConst {
 		CAR_RESPAWN_Z = 36.f,
 
 		BUMP_COOLDOWN_TIME = 0.25f,
-		BUMP_MIN_FORWARD_DIST = 64.5f,
+		BUMP_MIN_FORWARD_DIST = 64.5f, // Unused, bumps use the forward cone below
+		BUMP_YAW_LIMIT_DEG = 70.f,
+		BUMP_PITCH_LIMIT_DEG = 36.869896f,
+		DEMO_YAW_LIMIT_DEG = 45.572994f,
+		DEMO_PITCH_LIMIT_DEG = 36.869896f,
 		DEMO_RESPAWN_TIME = 3.f;
 
 	// NOTE: Angle order is PYR
@@ -497,6 +501,7 @@ namespace RLConst {
 		{
 			{     0, 0.65f},
 			{ 500.f, 0.65f},
+			{1400.f, 0.60f},
 			{2300.f, 0.55f},
 			{4600.f, 0.30f}
 		}
@@ -504,25 +509,25 @@ namespace RLConst {
 
 	const static LinearPieceCurve BUMP_VEL_AMOUNT_GROUND_CURVE = {
 		{
-			{0.f, (5.f / 6.f)},
-			{1400.f, 1100.f},
-			{2200.f, 1530.f},
+			{0.f, (150.f / 180.f)},
+			{1400.f, (200000.f / 180.f)},
+			{2200.f, (275000.f / 180.f)},
 		}
 	};
 
 	const static LinearPieceCurve BUMP_VEL_AMOUNT_AIR_CURVE = {
 		{
-			{0.f, (5.f / 6.f)},
-			{1400.f, 1390.f},
-			{2200.f, 1945.f},
+			{0.f, (150.f / 180.f)},
+			{1400.f, (250000.f / 180.f)},
+			{2200.f, (350000.f / 180.f)},
 		}
 	};
 
 	const static LinearPieceCurve BUMP_UPWARD_VEL_AMOUNT_CURVE = {
 		{
-			{0.f, (2.f / 6.f)},
-			{1400.f, 278.f},
-			{2200.f, 417.f},
+			{0.f, (50.f / 180.f)},
+			{1400.f, (50000.f / 180.f)},
+			{2200.f, (75000.f / 180.f)},
 		}
 	};
 }
