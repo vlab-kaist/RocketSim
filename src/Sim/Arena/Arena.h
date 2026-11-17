@@ -19,11 +19,55 @@
 #include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btDiscreteDynamicsWorld.h"
 #include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btDefaultCollisionConfiguration.h"
 
+struct btRSBroadphaseProxy;
+
 RS_NS_START
 
 using BoostPickupEventFn = void(*)(class Arena* arena, Car *car, BoostPad *boostPad, void* userInfo);
 using CarBumpEventFn     = void(*)(class Arena* arena, Car* bumper, Car* victim, bool isDemo, void* userInfo);
 using GoalScoreEventFn   = void(*)(class Arena* arena, Team scoringTeam, void* userInfo);
+
+// Everything an arena's next ticks depend on, to go back to with Arena::LoadSnapshot()
+// (the same arena, with the same cars). Restoring is exact: the arena then continues bit for bit as it did
+// from the snapshot. Unlike Arena::Clone(), saving and loading allocate nothing after the first save.
+struct ArenaSnapshot {
+	struct Body {
+		btTransform worldTransform, interpolationWorldTransform;
+		btVector3 linearVelocity, angularVelocity, interpolationLinearVelocity, interpolationAngularVelocity;
+		int activationState, collisionFlags;
+		float deactivationTime;
+	};
+
+	struct CarData {
+		uint32_t id;
+		CarState state;
+		CarControls controls;
+		Vec velocityImpulseCache;
+		uint64_t demoTick;
+		uint32_t demoerID;
+		float realThrottle;
+		Body body;
+		btWheelInfoRL wheels[4];
+	};
+
+	struct DynProxy {
+		btVector3 aabbMin, aabbMax;
+		int cellIdx, iIdx, jIdx, kIdx;
+	};
+
+	uint64_t tickCount = 0;
+	BallState ballState;
+	Vec ballVelocityImpulseCache;
+	bool ballGroundStickApplied;
+	Body ballBody;
+	std::vector<CarData> cars;
+	std::vector<BoostPadState> boostPads;
+
+	// Broadphase: the cells and bounds of the moving bodies (ball, then cars), and the order of the
+	// moving bodies in each of their cells (it decides the order contacts are handled in)
+	std::vector<DynProxy> dynProxies;
+	std::vector<std::pair<int, std::vector<::btRSBroadphaseProxy*>>> dynCells;
+};
 
 // The container for all game simulation
 // Stores cars, the ball, all arena collisions, and manages the overall game state
@@ -139,6 +183,10 @@ public:
 
 	// Get a deep copy of the arena
 	Arena* Clone(bool copyCallbacks);
+
+	// Save everything the next ticks depend on, and go back to it later (same cars only)
+	void SaveSnapshot(ArenaSnapshot& out) const;
+	void LoadSnapshot(const ArenaSnapshot& in);
 
 	// NOTE: Car ID will not be restored
 	Car* DeserializeNewCar(DataStreamIn& in, Team team);

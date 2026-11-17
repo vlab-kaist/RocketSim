@@ -34,3 +34,8 @@ add_executable(clone_test clone_test.cpp ${BULLET_SOURCES} ${SIM_SOURCES})
 target_compile_features(clone_test PRIVATE cxx_std_20)
 target_compile_definitions(clone_test PRIVATE RS_DONT_LOG=1)
 target_include_directories(clone_test PRIVATE ${ROOT}/libsrc ${ROOT}/src)
+
+add_executable(snapshot_test snapshot_test.cpp ${BULLET_SOURCES} ${SIM_SOURCES})
+target_compile_features(snapshot_test PRIVATE cxx_std_20)
+target_compile_definitions(snapshot_test PRIVATE RS_DONT_LOG=1)
+target_include_directories(snapshot_test PRIVATE ${ROOT}/libsrc ${ROOT}/src)
