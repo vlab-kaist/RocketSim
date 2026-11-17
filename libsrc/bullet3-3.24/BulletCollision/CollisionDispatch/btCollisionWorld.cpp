@@ -276,10 +276,12 @@ void btCollisionWorld::performDiscreteCollisionDetection()
 					btTransform newChildWorldTrans = compoundObjWrap->getWorldTransform() * childTrans;
 					btVector3 aabbMin0, aabbMax0, aabbMin1, aabbMax1;
 					childShape->getAabb(newChildWorldTrans, aabbMin0, aabbMax0);
+					btVector3 childMin = aabbMin0, childMax = aabbMax0;
 					btVector3 extendAabb(contactPointResult.m_closestPointDistanceThreshold, contactPointResult.m_closestPointDistanceThreshold, contactPointResult.m_closestPointDistanceThreshold);
 					aabbMin0 -= extendAabb;
 					aabbMax0 += extendAabb;
 					otherObjWrap->getCollisionShape()->getAabb(otherObjWrap->getWorldTransform(), aabbMin1, aabbMax1);
+					const btVector3 otherMin = aabbMin1, otherMax = aabbMax1;
 					if (TestAabbAgainstAabb2(aabbMin0, aabbMax0, aabbMin1, aabbMax1))
 					{
 						btTransform preTransform = childTrans;
@@ -304,10 +306,9 @@ void btCollisionWorld::performDiscreteCollisionDetection()
 							contactPointResult.setBody1Wrap(tmpWrap);
 					}
 
-					// (The end of processCollision(): no longer overlapping, so the child algorithm goes)
-					childShape->getAabb(newChildWorldTrans, aabbMin0, aabbMax0);
-					otherObjWrap->getCollisionShape()->getAabb(otherObjWrap->getWorldTransform(), aabbMin1, aabbMax1);
-					if (!TestAabbAgainstAabb2(aabbMin0, aabbMax0, aabbMin1, aabbMax1))
+					// (The end of processCollision(): no longer overlapping, so the child algorithm goes. The bounds are
+					// the same as above: the transforms didn't change)
+					if (!TestAabbAgainstAabb2(childMin, childMax, otherMin, otherMax))
 					{
 						childAlgorithm->~btCollisionAlgorithm();
 						dispatcher->freeCollisionAlgorithm(childAlgorithm);
