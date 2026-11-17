@@ -16,6 +16,7 @@ subject to the following restrictions:
 #define BT_TRANSFORM_UTIL_H
 
 #include "btTransform.h"
+#include "btGameMath.h"
 #define ANGULAR_MOTION_THRESHOLD btScalar(0.5) * SIMD_HALF_PI
 
 SIMD_FORCE_INLINE btVector3 btAabbSupport(const btVector3& halfExtents, const btVector3& supportDir)
@@ -34,56 +35,11 @@ public:
 		predictedTransform.setBasis(curTrans.getBasis());
 	}
 
+	// RocketSim: the orientation is integrated as in the game (see btGameMath::IntegrateOrientation)
 	static void integrateTransform(const btTransform& curTrans, const btVector3& linvel, const btVector3& angvel, btScalar timeStep, btTransform& predictedTransform)
 	{
 		predictedTransform.setOrigin(curTrans.getOrigin() + linvel * timeStep);
-		//	#define QUATERNION_DERIVATIVE
-#ifdef QUATERNION_DERIVATIVE
-		btQuaternion predictedOrn = curTrans.getRotation();
-		predictedOrn += (angvel * predictedOrn) * (timeStep * btScalar(0.5));
-		predictedOrn.safeNormalize();
-#else
-		//Exponential map
-		//google for "Practical Parameterization of Rotations Using the Exponential Map", F. Sebastian Grassia
-
-		btVector3 axis;
-		btScalar fAngle2 = angvel.length2();
-		btScalar fAngle = 0;
-		if (fAngle2 > SIMD_EPSILON)
-		{
-			fAngle = btSqrt(fAngle2);
-		}
-
-		//limit the angular motion
-		if (fAngle * timeStep > ANGULAR_MOTION_THRESHOLD)
-		{
-			fAngle = ANGULAR_MOTION_THRESHOLD / timeStep;
-		}
-
-		if (fAngle < btScalar(0.001))
-		{
-			// use Taylor's expansions of sync function
-			axis = angvel * (btScalar(0.5) * timeStep - (timeStep * timeStep * timeStep) * (btScalar(0.020833333333)) * fAngle * fAngle);
-		}
-		else
-		{
-			// sync(fAngle) = sin(c*fAngle)/t
-			axis = angvel * (btSin(btScalar(0.5) * fAngle * timeStep) / fAngle);
-		}
-		btQuaternion dorn(axis.x(), axis.y(), axis.z(), btCos(fAngle * timeStep * btScalar(0.5)));
-		btQuaternion orn0 = curTrans.getRotation();
-
-		btQuaternion predictedOrn = dorn * orn0;
-		predictedOrn.safeNormalize();
-#endif
-		if (predictedOrn.length2() > SIMD_EPSILON)
-		{
-			predictedTransform.setRotation(predictedOrn);
-		}
-		else
-		{
-			predictedTransform.setBasis(curTrans.getBasis());
-		}
+		predictedTransform.setBasis(btGameMath::IntegrateOrientation(curTrans.getBasis(), angvel, timeStep));
 	}
 
 	static void calculateVelocityQuaternion(const btVector3& pos0, const btVector3& pos1, const btQuaternion& orn0, const btQuaternion& orn1, btScalar timeStep, btVector3& linVel, btVector3& angVel)
