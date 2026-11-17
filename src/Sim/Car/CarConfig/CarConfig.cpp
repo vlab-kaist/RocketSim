@@ -17,26 +17,27 @@ RS_NS_START
 // -  The hitbox values I have produce a matching inertia matrix with real RL,
 //    the ones everyone else uses/shares do not.
 
+// More precise values, from RocketSim v3 (car_body_config.rs), which match the game
 const static Vec HITBOX_SIZES[7] = { 
-	{ 120.507f,	86.6994f,	38.6591f	}, // OCTANE
-	{ 130.427f,	85.7799f,	33.8f		}, // DOMINUS
-	{ 131.32f,	87.1704f,	31.8944f	}, // PLANK
-	{ 133.992f,	83.021f,	32.8f		}, // BREAKOUT
-	{ 129.519f,	84.6879f,	36.6591f	}, // HYBRID
-	{ 123.22f,	79.2103f,	44.1591f	}, // MERC
+	{ 120.50738f,	86.69941f,	38.659073f	}, // OCTANE
+	{ 130.42679f,	85.77995f,	33.8f		}, // DOMINUS
+	{ 131.31978f,	87.170364f,	31.894402f	}, // PLANK
+	{ 133.99236f,	83.021f,	32.8f		}, // BREAKOUT
+	{ 129.5192f,	84.68787f,	36.659073f	}, // HYBRID
+	{ 123.22023f,	79.21031f,	44.159073f	}, // MERC
 
-	{ 120.507f + 0.134f, 86.6994f + 0.134f,	38.6591f + 0.134f}   // PSYCLOPS
+	{ 120.64101f,	86.833405f,	38.7931f	}  // PSYCLOPS
 };
 
 const static Vec HITBOX_OFFSETS[7] = { 
-	{ 13.8757f,	0, 20.755f	}, 
-	{ 9.f,		0, 15.75f	},	
-	{ 9.00857f, 0, 12.0942f	},
-	{ 12.5f,	0, 11.75f	},
-	{ 13.8757f,	0, 20.755f	},
-	{ 11.3757f,	0, 21.505f	},
+	{ 13.87566f,	0, 20.754988f	}, 
+	{ 9.f,			0, 15.75f		},	
+	{ 9.008572f,	0, 12.0942f		},
+	{ 12.5f,		0, 11.75f		},
+	{ 13.87566f,	0, 20.754988f	},
+	{ 11.37566f,	0, 21.504988f	},
 
-	{ 13.8757f,	0, 15.0f	}
+	{ 13.8757f,		0, 15.0f		}
 };
 
 constexpr float FRONT_WHEEL_RADS[7] = {
