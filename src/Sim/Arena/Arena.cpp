@@ -776,6 +776,8 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
 		solverInfo.m_erp = 0.1f;
 		// Restitution applies at any approach speed (slow contacts, like a rolling ball, still bounce)
 		solverInfo.m_restitutionVelocityThreshold = 0;
+		// stepSimulation() sets this, but the wheel pushback reads it before the world steps
+		solverInfo.m_timeStep = tickTime;
 	}
 
 	bool loadArenaStuff = gameMode != GameMode::THE_VOID;
@@ -961,14 +963,94 @@ Arena* Arena::Clone(bool copyCallbacks) {
 	newArena->ball->_internalState.tickCountSinceUpdate = this->ball->_internalState.tickCountSinceUpdate;
 	newArena->ball->_velocityImpulseCache = this->ball->_velocityImpulseCache;
 
+	newArena->SetMutatorConfig(this->_mutatorConfig);
+
 	for (Car* car : this->_cars) {
 		Car* newCar = newArena->AddCar(car->team, car->config);
 		
 		newCar->SetState(car->GetState());
 		newCar->_internalState.tickCountSinceUpdate = car->_internalState.tickCountSinceUpdate;
+		newArena->_carIDMap.erase(newCar->id);
 		newCar->id = car->id;
+		newArena->_carIDMap[newCar->id] = newCar;
 		newCar->controls = car->controls;
 		newCar->_velocityImpulseCache = car->_velocityImpulseCache;
+		newCar->_demoTick = car->_demoTick;
+		newCar->_demoerID = car->_demoerID;
+		newCar->_realThrottle = car->_realThrottle;
+	}
+
+	{ // Copy the wheel state of the last vehicle update, which the next tick reads, with the bodies under the wheels remapped
+		std::unordered_map<const btCollisionObject*, btCollisionObject*> bodyMap;
+		for (size_t i = 0; i < this->_worldCollisionRBs.size(); i++)
+			bodyMap[this->_worldCollisionRBs[i]] = newArena->_worldCollisionRBs[i];
+		bodyMap[&this->ball->_rigidBody] = &newArena->ball->_rigidBody;
+		for (size_t i = 0; i < this->_cars.size(); i++)
+			bodyMap[&this->_cars[i]->_rigidBody] = &newArena->_cars[i]->_rigidBody;
+
+		for (size_t i = 0; i < this->_cars.size(); i++) {
+			auto& src = this->_cars[i]->_bulletVehicle.m_wheelInfo;
+			auto& dst = newArena->_cars[i]->_bulletVehicle.m_wheelInfo;
+			for (int w = 0; w < src.size(); w++) {
+				dst[w] = src[w];
+				void* ground = src[w].m_raycastInfo.m_groundObject;
+				auto itr = bodyMap.find((const btCollisionObject*)ground);
+				dst[w].m_raycastInfo.m_groundObject = ground ? (itr != bodyMap.end() ? itr->second : NULL) : NULL;
+			}
+			// SetState() traced the wheels again; keep the contacts of the original instead
+			auto& srcState = this->_cars[i]->_internalState;
+			auto& dstState = newArena->_cars[i]->_internalState;
+			dstState.isOnGround = srcState.isOnGround;
+			std::memcpy(dstState.wheelsWithContact, srcState.wheelsWithContact, sizeof(srcState.wheelsWithContact));
+		}
+
+		// Sleep and motion state of the moving bodies
+		std::vector<std::pair<btRigidBody*, btRigidBody*>> bodies = { { &this->ball->_rigidBody, &newArena->ball->_rigidBody } };
+		for (size_t i = 0; i < this->_cars.size(); i++)
+			bodies.push_back({ &this->_cars[i]->_rigidBody, &newArena->_cars[i]->_rigidBody });
+		for (auto& [src, dst] : bodies) {
+			// The exact body state (the state structs are in UU, which does not convert back exactly)
+			dst->setWorldTransform(src->getWorldTransform());
+			dst->setCenterOfMassTransform(src->getCenterOfMassTransform());
+			dst->setLinearVelocity(src->getLinearVelocity());
+			dst->setAngularVelocity(src->getAngularVelocity());
+			// The previous tick's transform, which widens the bodies' bounds
+			dst->setInterpolationWorldTransform(src->getInterpolationWorldTransform());
+			dst->setInterpolationLinearVelocity(src->getInterpolationLinearVelocity());
+			dst->setInterpolationAngularVelocity(src->getInterpolationAngularVelocity());
+			dst->forceActivationState(src->getActivationState());
+			dst->setDeactivationTime(src->getDeactivationTime());
+		}
+
+		// The order of the moving proxies in each broadphase cell decides the order contacts are processed in,
+		// and it depends on how the bodies moved; copy it, with the proxies' cells and bounds
+		auto* srcBP = dynamic_cast<btRSBroadphase*>(this->_bulletWorld.getBroadphase());
+		auto* dstBP = dynamic_cast<btRSBroadphase*>(newArena->_bulletWorld.getBroadphase());
+		if (srcBP && dstBP && srcBP->cells.size() == dstBP->cells.size()) {
+			std::unordered_map<btBroadphaseProxy*, btRSBroadphaseProxy*> proxyMap;
+			for (auto& [srcObj, dstObj] : bodyMap)
+				proxyMap[(btBroadphaseProxy*)srcObj->getBroadphaseHandle()] = (btRSBroadphaseProxy*)dstObj->getBroadphaseHandle();
+			for (auto& [srcProxy, dstProxy] : proxyMap) {
+				auto* sp = (btRSBroadphaseProxy*)srcProxy;
+				if (sp->isStatic)
+					continue;
+				dstProxy->m_aabbMin = sp->m_aabbMin;
+				dstProxy->m_aabbMax = sp->m_aabbMax;
+				dstProxy->cellIdx = sp->cellIdx;
+				dstProxy->iIdx = sp->iIdx;
+				dstProxy->jIdx = sp->jIdx;
+				dstProxy->kIdx = sp->kIdx;
+			}
+			for (size_t c = 0; c < srcBP->cells.size(); c++) {
+				auto& dstList = dstBP->cells[c].dynHandles;
+				dstList.clear();
+				for (auto* sp : srcBP->cells[c].dynHandles) {
+					auto itr = proxyMap.find(sp);
+					if (itr != proxyMap.end())
+						dstList.push_back(itr->second);
+				}
+			}
+		}
 	}
 
 	assert(this->_boostPads.size() == newArena->_boostPads.size());

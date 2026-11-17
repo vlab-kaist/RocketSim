@@ -3,3 +3,4 @@ __pycache__/
 *.egg-info/
 recordings_synth/
 replay_v3/target/
+replay_v3/target-native/

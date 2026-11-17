@@ -529,8 +529,22 @@ void Car::_UpdateWheelFriction() {
 	using namespace RLConst;
 
 	// Steering changed the front wheel axles this tick
-	for (int i = 0; i < _bulletVehicle.getNumWheels(); i++)
-		_bulletVehicle.updateWheelBasis(i);
+	// Every wheel's basis comes from the same chassis axes and its steer angle, so wheels with the same
+	// angle share it (only the origin differs)
+	for (int i = 0; i < _bulletVehicle.getNumWheels(); i++) {
+		auto& wheel = _bulletVehicle.m_wheelInfo[i];
+		int same = -1;
+		for (int j = 0; j < i; j++)
+			if (_bulletVehicle.m_wheelInfo[j].m_steerAngle == wheel.m_steerAngle)
+				same = j;
+		if (same < 0) {
+			_bulletVehicle.updateWheelBasis(i);
+		} else {
+			wheel.m_worldTransform.setBasis(_bulletVehicle.m_wheelInfo[same].m_worldTransform.getBasis());
+			wheel.m_worldTransform.setOrigin(
+				wheel.m_raycastInfo.m_hardPointWS + wheel.m_raycastInfo.m_wheelDirectionWS * wheel.m_raycastInfo.m_suspensionLength);
+		}
+	}
 
 	float realThrottle = _realThrottle;
 	{

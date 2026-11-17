@@ -27,3 +27,8 @@ target_link_libraries(bench_par PRIVATE OpenMP::OpenMP_CXX)
 if(BENCH_NATIVE)
 	target_compile_options(bench_par PRIVATE -march=native)
 endif()
+
+add_executable(clone_test clone_test.cpp ${BULLET_SOURCES} ${SIM_SOURCES})
+target_compile_features(clone_test PRIVATE cxx_std_20)
+target_compile_definitions(clone_test PRIVATE RS_DONT_LOG=1)
+target_include_directories(clone_test PRIVATE ${ROOT}/libsrc ${ROOT}/src)

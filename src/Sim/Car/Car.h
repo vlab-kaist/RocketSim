@@ -197,6 +197,9 @@ public:
 	// Tick and car that last demolished this car (the victim of a demo can still demo back on that tick)
 	uint64_t _demoTick = UINT64_MAX;
 	uint32_t _demoerID = 0;
+
+	// Throttle the wheel update decided on, which the friction update reads
+	float _realThrottle = 0;
 	void _FinishPhysicsTick(const MutatorConfig& mutatorConfig);
 	void _ApplyFlipZDamp();
 
@@ -217,7 +220,6 @@ private:
 	void _UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int numWheelsInContact, float forwardSpeed_UU);
 	void _UpdateWheelFriction();
 	void _UpdateWheelContacts(bool trace);
-	float _realThrottle = 0;
 	void _UpdateBoost(float tickTime, const MutatorConfig& mutatorConfig, float forwardSpeed_UU);
 	void _UpdateJump(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed);
 	void _UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, int numWheelsInContact, bool prevIsFlipping, float prevFlipTime);
