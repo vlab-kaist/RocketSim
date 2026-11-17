@@ -368,10 +368,11 @@ void btNearestPointInLineSegment(const btVector3& point, const btVector3& line0,
 		btScalar delta = (point - line0).dot(lineDelta) / (lineDelta).dot(lineDelta);
 
 		// Clamp the point to conform to the segment's endpoints
-		if (delta < 0)
-			delta = 0;
-		else if (delta > 1)
-			delta = 1;
+		// RocketSim: the game clamps to [1e-5, 0.99999], which matters where two meshes share an edge end (the crossbar)
+		if (delta < 1e-5f)
+			delta = 1e-5f;
+		else if (delta > 0.99999f)
+			delta = 0.99999f;
 
 		nearestPoint = line0 + lineDelta * delta;
 	}

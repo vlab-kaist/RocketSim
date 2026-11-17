@@ -190,10 +190,8 @@ int btPersistentManifold::sortCachedPoints(const btManifoldPoint& pt)
 
 int btPersistentManifold::getCacheEntry(const btManifoldPoint& newPoint) const
 {
-	// ROCKETSIM CHANGE: Don't overwrite old manifolds with new manifolds
-	// Disabling this return makes ball-arena collisions far less accurate to the game
-	return -1;
-
+	// RocketSim: nearby points are merged as in Bullet (and the game). This was once disabled because
+	// ball-arena bounces got worse, but that came from the special contact using an unnormalized mean normal.
 	btScalar shortestDist = getContactBreakingThreshold() * getContactBreakingThreshold();
 	int size = getNumContacts();
 	int nearestPoint = -1;

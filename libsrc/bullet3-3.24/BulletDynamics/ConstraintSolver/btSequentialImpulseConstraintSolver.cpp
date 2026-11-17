@@ -1169,6 +1169,8 @@ void btSequentialImpulseConstraintSolver::convertContactSpecial(btCollisionObjec
 	// Calculate average distance and normal
 	float distance = obj.m_specialResolveInfo.m_totalDist / obj.m_specialResolveInfo.m_numSpecialCollisions;
 	btVector3 normal = obj.m_specialResolveInfo.m_totalNormal / obj.m_specialResolveInfo.m_numSpecialCollisions;
+	// The mean of unit normals that disagree (an edge or a curved mesh) is shorter than 1; the game normalizes it
+	normal = normal.safeNormalized();
 
 	// Create a temporary manifold for this collision
 	btManifoldPoint specialTempManifold = {};
