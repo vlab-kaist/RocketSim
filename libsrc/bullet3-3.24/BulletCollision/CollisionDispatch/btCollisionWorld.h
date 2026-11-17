@@ -93,6 +93,11 @@ protected:
 	btBroadphaseInterface* m_broadphasePairCache;
 	// RocketSim: m_broadphasePairCache, if it is a btRSBroadphase
 	class btRSBroadphase* m_rsBroadphase = NULL;
+
+	// RocketSim: with a btRSBroadphase, the overlapping pairs of the last collision detection live here
+	// instead of in the broadphase's pair cache (see performDiscreteCollisionDetection())
+	btAlignedObjectArray<btBroadphasePair> m_rsPairs;
+	void rsReleasePairs(btBroadphaseProxy* onlyProxy = NULL);
 	static class btRSBroadphase* _asRSBroadphase(btBroadphaseInterface* broadphase);
 
 	///m_forceUpdateAllAabbs can be set to false as an optimization to only update active object AABBs
@@ -122,6 +127,16 @@ public:
 	btBroadphaseInterface* getBroadphase()
 	{
 		return m_broadphasePairCache;
+	}
+
+	// RocketSim: the pairs found by the last collision detection, when it used the btRSBroadphase path
+	const btAlignedObjectArray<btBroadphasePair>& getRSPairs() const
+	{
+		return m_rsPairs;
+	}
+	bool usesRSPairs() const
+	{
+		return m_rsBroadphase != NULL;
 	}
 
 	btOverlappingPairCache* getPairCache()

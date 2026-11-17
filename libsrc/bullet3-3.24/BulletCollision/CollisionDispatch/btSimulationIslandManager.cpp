@@ -41,10 +41,12 @@ void btSimulationIslandManager::findUnions(btCollisionDispatcher* /* dispatcher 
 {
 	{
 		btOverlappingPairCache* pairCachePtr = colWorld->getPairCache();
-		const int numOverlappingPairs = pairCachePtr->getNumOverlappingPairs();
+		// RocketSim: the pairs may be kept by the collision world instead of the cache
+		const bool rsPairs = colWorld->usesRSPairs();
+		const int numOverlappingPairs = rsPairs ? colWorld->getRSPairs().size() : pairCachePtr->getNumOverlappingPairs();
 		if (numOverlappingPairs)
 		{
-			btBroadphasePair* pairPtr = pairCachePtr->getOverlappingPairArrayPtr();
+			const btBroadphasePair* pairPtr = rsPairs ? &colWorld->getRSPairs()[0] : pairCachePtr->getOverlappingPairArrayPtr();
 
 			for (int i = 0; i < numOverlappingPairs; i++)
 			{

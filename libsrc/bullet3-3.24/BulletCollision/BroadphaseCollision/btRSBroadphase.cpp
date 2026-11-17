@@ -450,6 +450,57 @@ void btRSBroadphase::aabbTest(const btVector3& aabbMin, const btVector3& aabbMax
 	}
 }
 
+void btRSBroadphase::collectOverlappingPairs(btAlignedObjectArray<btBroadphasePair>& out) {
+	out.resize(0);
+	if (m_numHandles < 0)
+		return;
+
+	// btHashedOverlappingPairCache::addOverlappingPair(): filtered pairs are not added, and a pair that is
+	// already there (moving pairs are found from both sides) is not added again
+	auto addPair = [&](btRSBroadphaseProxy* proxy, btRSBroadphaseProxy* other, bool bothMoving) {
+		bool collides = (proxy->m_collisionFilterGroup & other->m_collisionFilterMask) != 0;
+		collides = collides && (other->m_collisionFilterGroup & proxy->m_collisionFilterMask);
+		if (!collides)
+			return;
+		if (bothMoving)
+			for (int i = 0; i < out.size(); i++)
+				if ((out[i].m_pProxy0 == proxy && out[i].m_pProxy1 == other) || (out[i].m_pProxy0 == other && out[i].m_pProxy1 == proxy))
+					return;
+		out.push_back(btBroadphasePair(*proxy, *other));
+	};
+
+	int new_largest_index = -1;
+	for (int i = 0; i <= m_LastHandleIndex; i++) {
+		btRSBroadphaseProxy* proxy = &m_pHandles[i];
+		if (proxy->isStatic)
+			continue;
+		if (!proxy->m_clientObject)
+			continue;
+
+		new_largest_index = i;
+
+		for (auto otherProxy : GetStaticHandles(proxy->cellIdx)) {
+			if (!otherProxy->m_clientObject)
+				continue;
+			if (aabbOverlap(proxy, otherProxy))
+				addPair(proxy, otherProxy, false);
+		}
+
+		Cell& cell = cells[proxy->cellIdx];
+		if (numDynProxies > 1 && cell.dynHandles.size() > 1) {
+			for (auto& otherProxy : cell.dynHandles) {
+				if (otherProxy == proxy || !otherProxy->m_clientObject)
+					continue;
+				if (aabbOverlap(proxy, otherProxy))
+					addPair(proxy, otherProxy, true);
+			}
+		}
+	}
+
+	// (As calculateOverlappingPairs() does)
+	m_LastHandleIndex = new_largest_index;
+}
+
 bool btRSBroadphase::aabbOverlap(btRSBroadphaseProxy* proxy0, btRSBroadphaseProxy* proxy1) {
 	return TestAabbAgainstAabb2(proxy0->m_aabbMin, proxy0->m_aabbMax, proxy1->m_aabbMin, proxy1->m_aabbMax);
 }

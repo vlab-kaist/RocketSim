@@ -199,6 +199,10 @@ public:
 
 	virtual void calculateOverlappingPairs(btCollisionDispatcher* dispatcher);
 
+	// RocketSim: the pairs calculateOverlappingPairs() puts in the pair cache, in the cache's order and
+	// orientation (lower unique id first), without the cache. (out is cleared first.)
+	void collectOverlappingPairs(btAlignedObjectArray<btBroadphasePair>& out);
+
 	virtual void destroyProxy(btBroadphaseProxy* proxy, btCollisionDispatcher* dispatcher);
 	virtual void setAabb(btBroadphaseProxy* proxy, const btVector3& aabbMin, const btVector3& aabbMax, btCollisionDispatcher* dispatcher);
 	virtual void getAabb(btBroadphaseProxy* proxy, btVector3& aabbMin, btVector3& aabbMax) const;

@@ -75,6 +75,8 @@ btRSBroadphase* btCollisionWorld::_asRSBroadphase(btBroadphaseInterface* broadph
 
 btCollisionWorld::~btCollisionWorld()
 {
+	rsReleasePairs();
+
 	//clean up remaining objects
 	int i;
 	for (i = 0; i < m_collisionObjects.size(); i++)
@@ -221,14 +223,66 @@ void btCollisionWorld::performDiscreteCollisionDetection()
 
 	{ RS_PROF(20, "    aabbs"); updateAabbs(); }
 
+	btCollisionDispatcher* dispatcher = getDispatcher();
+	if (m_rsBroadphase && dispatcher)
+	{
+		// RocketSim: the same pairs, algorithms and order as the pair cache path, without the cache
+		{
+			RS_PROF(21, "    broadphase pairs");
+			rsReleasePairs();
+			m_rsBroadphase->collectOverlappingPairs(m_rsPairs);
+		}
+		RS_PROF(22, "    narrowphase");
+		for (int i = 0; i < m_rsPairs.size(); i++)
+		{
+			btBroadphasePair& pair = m_rsPairs[i];
+			// (btCollisionDispatcher::defaultNearCallback())
+			btCollisionObject* colObj0 = (btCollisionObject*)pair.m_pProxy0->m_clientObject;
+			btCollisionObject* colObj1 = (btCollisionObject*)pair.m_pProxy1->m_clientObject;
+			if (!dispatcher->needsCollision(colObj0, colObj1))
+				continue;
+			btCollisionObjectWrapper obj0Wrap(0, colObj0->getCollisionShape(), colObj0, colObj0->getWorldTransform(), -1, -1);
+			btCollisionObjectWrapper obj1Wrap(0, colObj1->getCollisionShape(), colObj1, colObj1->getWorldTransform(), -1, -1);
+			if (!pair.m_algorithm)
+				pair.m_algorithm = dispatcher->findAlgorithm(&obj0Wrap, &obj1Wrap, 0, BT_CONTACT_POINT_ALGORITHMS);
+			if (pair.m_algorithm)
+			{
+				btManifoldResult contactPointResult(&obj0Wrap, &obj1Wrap);
+				pair.m_algorithm->processCollision(&obj0Wrap, &obj1Wrap, dispatchInfo, &contactPointResult);
+			}
+		}
+		return;
+	}
+
 	{ RS_PROF(21, "    broadphase pairs"); computeOverlappingPairs(); }
 
-	btCollisionDispatcher* dispatcher = getDispatcher();
 	{
 		RS_PROF(22, "    narrowphase");
 		if (dispatcher)
 			dispatcher->dispatchAllCollisionPairs(m_broadphasePairCache->getOverlappingPairCache(), dispatchInfo, m_dispatcher1);
 	}
+}
+
+void btCollisionWorld::rsReleasePairs(btBroadphaseProxy* onlyProxy)
+{
+	// (btHashedOverlappingPairCache::cleanOverlappingPair(), in the cache's removal order)
+	int kept = 0;
+	for (int i = 0; i < m_rsPairs.size(); i++)
+	{
+		btBroadphasePair& pair = m_rsPairs[i];
+		if (onlyProxy && pair.m_pProxy0 != onlyProxy && pair.m_pProxy1 != onlyProxy)
+		{
+			m_rsPairs[kept++] = pair;
+			continue;
+		}
+		if (pair.m_algorithm)
+		{
+			pair.m_algorithm->~btCollisionAlgorithm();
+			m_dispatcher1->freeCollisionAlgorithm(pair.m_algorithm);
+			pair.m_algorithm = 0;
+		}
+	}
+	m_rsPairs.resize(onlyProxy ? kept : 0);
 }
 
 void btCollisionWorld::removeCollisionObject(btCollisionObject* collisionObject)
@@ -243,6 +297,7 @@ void btCollisionWorld::removeCollisionObject(btCollisionObject* collisionObject)
 			// only clear the cached algorithms
 			//
 			getBroadphase()->getOverlappingPairCache()->cleanProxyFromPairs(bp, m_dispatcher1);
+			rsReleasePairs(bp);
 			getBroadphase()->destroyProxy(bp, m_dispatcher1);
 			collisionObject->setBroadphaseHandle(0);
 		}
