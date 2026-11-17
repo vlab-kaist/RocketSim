@@ -74,6 +74,10 @@ public:
 	btScalar m_linearDamping;
 	btScalar m_angularDamping;
 
+	// RocketSim: the per-step damping factors, cached for the damping and step they were computed for
+	btScalar m_dampingCacheLinear = -1, m_dampingCacheAngular = -1, m_dampingCacheStep = -1;
+	btScalar m_linearDampingFactor = 1, m_angularDampingFactor = 1;
+
 	bool m_additionalDamping;
 	btScalar m_additionalDampingFactor;
 	btScalar m_additionalLinearDampingThresholdSqr;

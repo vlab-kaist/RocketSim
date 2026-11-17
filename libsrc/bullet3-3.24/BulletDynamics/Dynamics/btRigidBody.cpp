@@ -159,8 +159,17 @@ void btRigidBody::applyDamping(btScalar timeStep)
 	m_linearVelocity *= btMax((btScalar(1.0) - timeStep * m_linearDamping), btScalar(0.0));
 	m_angularVelocity *= btMax((btScalar(1.0) - timeStep * m_angularDamping), btScalar(0.0));
 #else
-	m_linearVelocity *= btPow(btScalar(1) - m_linearDamping, timeStep);
-	m_angularVelocity *= btPow(btScalar(1) - m_angularDamping, timeStep);
+	// RocketSim: the factors only change with the damping or the step
+	if (m_linearDamping != m_dampingCacheLinear || m_angularDamping != m_dampingCacheAngular || timeStep != m_dampingCacheStep)
+	{
+		m_linearDampingFactor = btPow(btScalar(1) - m_linearDamping, timeStep);
+		m_angularDampingFactor = btPow(btScalar(1) - m_angularDamping, timeStep);
+		m_dampingCacheLinear = m_linearDamping;
+		m_dampingCacheAngular = m_angularDamping;
+		m_dampingCacheStep = timeStep;
+	}
+	m_linearVelocity *= m_linearDampingFactor;
+	m_angularVelocity *= m_angularDampingFactor;
 #endif
 
 	if (m_additionalDamping)
