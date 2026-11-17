@@ -1,5 +1,6 @@
 #include <cmath>
 #include <cfloat>
+#include <new>
 /*
 Bullet Continuous Collision Detection and Physics Library
 Copyright (c) 2003-2006 Erwin Coumans  https://bulletphysics.org
@@ -24,6 +25,7 @@ subject to the following restrictions:
 #include "../NarrowPhaseCollision/btGjkEpaPenetrationDepthSolver.h"
 #include "../CollisionShapes/btSphereShape.h"                 //for raycasting
 #include "../CollisionShapes/btBvhTriangleMeshShape.h"        //for raycasting
+#include "../BroadphaseCollision/btRSBroadphase.h"
 #include "../NarrowPhaseCollision/btRaycastCallback.h"
 #include "../CollisionShapes/btCompoundShape.h"
 #include "../NarrowPhaseCollision/btSubSimplexConvexCast.h"
@@ -674,16 +676,30 @@ void btCollisionWorld::rayTestSingleInternal(const btTransform& rayFromTrans, co
 				btVector3 rayFromLocal = worldTocollisionObject * rayFromTrans.getOrigin();
 				btVector3 rayToLocal = worldTocollisionObject * rayToTrans.getOrigin();
 
-				// RocketSim: a ray that stays clearly on one side of a plane cannot hit it. The plane
-				// is otherwise tested as two huge triangles, which would reject such a ray as well.
+				// RocketSim: rays against a plane are solved exactly (as in RocketSim v3), instead of as two
+				// triangles around the ray. Like the triangle test, a ray that only touches the plane
+				// misses, and the normal faces the side the ray comes from.
 				if (collisionShape->getShapeType() == STATIC_PLANE_PROXYTYPE)
 				{
 					const btStaticPlaneShape* plane = (const btStaticPlaneShape*)collisionShape;
-					const btScalar tolerance = btScalar(1e-3);
-					btScalar distFrom = plane->getPlaneNormal().dot(rayFromLocal) - plane->getPlaneConstant();
-					btScalar distTo = plane->getPlaneNormal().dot(rayToLocal) - plane->getPlaneConstant();
-					if ((distFrom > tolerance && distTo > tolerance) || (distFrom < -tolerance && distTo < -tolerance))
+					const btVector3& planeNormal = plane->getPlaneNormal();
+					btScalar distFrom = planeNormal.dot(rayFromLocal) - plane->getPlaneConstant();
+					btScalar distTo = planeNormal.dot(rayToLocal) - plane->getPlaneConstant();
+					if (distFrom * distTo >= btScalar(0))
 						return;
+
+					btScalar hitFraction = distFrom / (distFrom - distTo);
+					if (hitFraction < resultCallback.m_closestHitFraction)
+					{
+						btCollisionWorld::LocalShapeInfo shapeInfo;
+						shapeInfo.m_shapePart = 0;
+						shapeInfo.m_triangleIndex = 0;
+						btVector3 hitNormalLocal = distFrom > 0 ? planeNormal : -planeNormal;
+						btCollisionWorld::LocalRayResult rayResult(collisionObjectWrap->getCollisionObject(), &shapeInfo,
+																   colObjWorldTransform.getBasis() * hitNormalLocal, hitFraction);
+						resultCallback.addSingleResult(rayResult, true);
+					}
+					return;
 				}
 
 				//ConvexCast::CastResult
@@ -1262,6 +1278,181 @@ struct btSingleRayCallback : public btBroadphaseRayCallback
 		return true;
 	}
 };
+
+namespace
+{
+// Same as the triangle mesh BridgeTriangleRaycastCallback of rayTestSingleInternal()
+struct RSMeshRaycastCallback : public btTriangleRaycastCallback
+{
+	btCollisionWorld::RayResultCallback* m_resultCallback;
+	const btCollisionObject* m_collisionObject;
+	btTransform m_colObjWorldTransform;
+
+	RSMeshRaycastCallback(const btVector3& from, const btVector3& to,
+						  btCollisionWorld::RayResultCallback* resultCallback, const btCollisionObject* collisionObject, const btTransform& colObjWorldTransform)
+		: btTriangleRaycastCallback(from, to, resultCallback->m_flags),
+		  m_resultCallback(resultCallback),
+		  m_collisionObject(collisionObject),
+		  m_colObjWorldTransform(colObjWorldTransform)
+	{
+	}
+
+	virtual btScalar reportHit(const btVector3& hitNormalLocal, btScalar hitFraction, int partId, int triangleIndex)
+	{
+		btCollisionWorld::LocalShapeInfo shapeInfo;
+		shapeInfo.m_shapePart = partId;
+		shapeInfo.m_triangleIndex = triangleIndex;
+
+		btVector3 hitNormalWorld = m_colObjWorldTransform.getBasis() * hitNormalLocal;
+
+		btCollisionWorld::LocalRayResult rayResult(m_collisionObject,
+												   &shapeInfo,
+												   hitNormalWorld,
+												   hitFraction);
+
+		bool normalInWorldSpace = true;
+		return m_resultCallback->addSingleResult(rayResult, normalInWorldSpace);
+	}
+};
+}  // namespace
+
+void btCollisionWorld::rayTestMulti(const btVector3* raysFromWorld, const btVector3* raysToWorld, RayResultCallback** resultCallbacks, int numRays) const
+{
+	constexpr int MAX_RAYS = 32;
+	btAssert(numRays <= MAX_RAYS);
+
+	// The rays must all be short enough for the broadphase to only look at the cell they start in
+	btRSBroadphase* broadphase = dynamic_cast<btRSBroadphase*>(m_broadphasePairCache);
+	bool batched = broadphase != NULL && numRays <= MAX_RAYS;
+	for (int r = 0; r < numRays && batched; r++)
+		if (raysFromWorld[r].distance2(raysToWorld[r]) >= broadphase->cellSizeSq)
+			batched = false;
+	if (!batched)
+	{
+		for (int r = 0; r < numRays; r++)
+			rayTest(raysFromWorld[r], raysToWorld[r], *resultCallbacks[r]);
+		return;
+	}
+
+	// Rays that start in different cells are handled in groups, one per cell
+	int cellIdx = broadphase->GetCellIdx(raysFromWorld[0]);
+	for (int r = 1; r < numRays; r++)
+	{
+		if (broadphase->GetCellIdx(raysFromWorld[r]) != cellIdx)
+		{
+			btVector3 groupFrom[MAX_RAYS], groupTo[MAX_RAYS];
+			RayResultCallback* groupCallbacks[MAX_RAYS];
+			bool done[MAX_RAYS] = {};
+			for (int first = 0; first < numRays; first++)
+			{
+				if (done[first])
+					continue;
+				int groupCell = broadphase->GetCellIdx(raysFromWorld[first]);
+				int n = 0;
+				for (int k = first; k < numRays; k++)
+				{
+					if (!done[k] && broadphase->GetCellIdx(raysFromWorld[k]) == groupCell)
+					{
+						done[k] = true;
+						groupFrom[n] = raysFromWorld[k];
+						groupTo[n] = raysToWorld[k];
+						groupCallbacks[n] = resultCallbacks[k];
+						n++;
+					}
+				}
+				rayTestMulti(groupFrom, groupTo, groupCallbacks, n);
+			}
+			return;
+		}
+	}
+
+	btTransform rayFromTrans[MAX_RAYS], rayToTrans[MAX_RAYS];
+	btVector3 rayMin[MAX_RAYS], rayMax[MAX_RAYS];
+	for (int r = 0; r < numRays; r++)
+	{
+		rayFromTrans[r].setIdentity();
+		rayFromTrans[r].setOrigin(raysFromWorld[r]);
+		rayToTrans[r].setIdentity();
+		rayToTrans[r].setOrigin(raysToWorld[r]);
+		rayMin[r] = raysFromWorld[r];
+		rayMax[r] = raysFromWorld[r];
+		rayMin[r].setMin(raysToWorld[r]);
+		rayMax[r].setMax(raysToWorld[r]);
+	}
+
+	// Visit the cell's objects in the order btRSBroadphase::rayTest() does, testing each ray against
+	// them as btSingleRayCallback::process() would
+	btRSBroadphase::Cell& cell = broadphase->cells[cellIdx];
+	for (int list = 0; list < 2; list++)
+	{
+		auto& handles = list == 0 ? cell.staticHandles : cell.dynHandles;
+		for (size_t h = 0; h < handles.size(); h++)
+		{
+			btRSBroadphaseProxy* proxy = handles[h];
+			if (!proxy->m_clientObject)
+				continue;
+			btCollisionObject* collisionObject = (btCollisionObject*)proxy->m_clientObject;
+			const btCollisionShape* shape = collisionObject->getCollisionShape();
+			const btTransform& worldTransform = collisionObject->getWorldTransform();
+
+			bool haveAabb = false;
+			btVector3 objMin, objMax;
+			int activeRays[MAX_RAYS];
+			int numActive = 0;
+			for (int r = 0; r < numRays; r++)
+			{
+				RayResultCallback* callback = resultCallbacks[r];
+				if (callback->m_closestHitFraction == btScalar(0.f))
+					continue;
+				if (!callback->needsCollision(collisionObject->getBroadphaseHandle()))
+					continue;
+				if (!collisionObject->isStaticObject())
+				{
+					if (!haveAabb)
+					{
+						shape->getAabb(worldTransform, objMin, objMax);
+						haveAabb = true;
+					}
+					const btVector3 pad(btScalar(1e-3), btScalar(1e-3), btScalar(1e-3));
+					if (!TestAabbAgainstAabb2(rayMin[r] - pad, rayMax[r] + pad, objMin, objMax))
+						continue;
+				}
+				activeRays[numActive++] = r;
+			}
+			if (numActive == 0)
+				continue;
+
+			if (numActive > 1 && shape->getShapeType() == TRIANGLE_MESH_SHAPE_PROXYTYPE)
+			{
+				btBvhTriangleMeshShape* triangleMesh = (btBvhTriangleMeshShape*)shape;
+				btTransform worldTocollisionObject = worldTransform.inverse();
+				btVector3 fromLocal[MAX_RAYS], toLocal[MAX_RAYS];
+				alignas(RSMeshRaycastCallback) unsigned char storage[MAX_RAYS][sizeof(RSMeshRaycastCallback)];
+				btTriangleCallback* callbacks[MAX_RAYS];
+				for (int i = 0; i < numActive; i++)
+				{
+					int r = activeRays[i];
+					fromLocal[i] = worldTocollisionObject * rayFromTrans[r].getOrigin();
+					toLocal[i] = worldTocollisionObject * rayToTrans[r].getOrigin();
+					RSMeshRaycastCallback* rcb = new (storage[i]) RSMeshRaycastCallback(fromLocal[i], toLocal[i], resultCallbacks[r], collisionObject, worldTransform);
+					rcb->m_hitFraction = resultCallbacks[r]->m_closestHitFraction;
+					callbacks[i] = rcb;
+				}
+				triangleMesh->performRaycasts(callbacks, fromLocal, toLocal, numActive);
+				for (int i = 0; i < numActive; i++)
+					((RSMeshRaycastCallback*)callbacks[i])->~RSMeshRaycastCallback();
+			}
+			else
+			{
+				for (int i = 0; i < numActive; i++)
+				{
+					int r = activeRays[i];
+					rayTestSingle(rayFromTrans[r], rayToTrans[r], collisionObject, shape, worldTransform, *resultCallbacks[r]);
+				}
+			}
+		}
+	}
+}
 
 void btCollisionWorld::rayTest(const btVector3& rayFromWorld, const btVector3& rayToWorld, RayResultCallback& resultCallback) const
 {

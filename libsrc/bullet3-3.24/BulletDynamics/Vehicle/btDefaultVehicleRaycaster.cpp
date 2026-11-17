@@ -10,6 +10,7 @@
 */
 
 #include "../../LinearMath/btVector3.h"
+#include <new>
 #include "btDefaultVehicleRaycaster.h"
 
 #include "../ConstraintSolver/btJacobianEntry.h"
@@ -29,42 +30,73 @@ btRigidBody& btActionInterface::getFixedBody()
 	return s_fixed;
 }
 
+namespace
+{
+struct MinDistRayResultCallback : public btCollisionWorld::ClosestRayResultCallback
+{
+	btScalar m_minDistSq;
+	MinDistRayResultCallback(const btVector3& from, const btVector3& to, const btCollisionObject* ignoreObj, btScalar minDistSq, int filterGroup)
+		: ClosestRayResultCallback(from, to, ignoreObj), m_minDistSq(minDistSq)
+	{
+		m_collisionFilterGroup = filterGroup;
+		m_collisionFilterMask = btBroadphaseProxy::AllFilter;
+	}
+
+	virtual btScalar addSingleResult(btCollisionWorld::LocalRayResult& rayResult, bool normalInWorldSpace)
+	{
+		btVector3 hitPoint;
+		hitPoint.setInterpolate3(m_rayFromWorld, m_rayToWorld, rayResult.m_hitFraction);
+		if ((hitPoint - m_rayFromWorld).length2() < m_minDistSq)
+			return m_closestHitFraction;
+		return ClosestRayResultCallback::addSingleResult(rayResult, normalInWorldSpace);
+	}
+
+	void* getResult(btVehicleRaycaster::btVehicleRaycasterResult& result) const
+	{
+		if (hasHit())
+		{
+			const btRigidBody* body = btRigidBody::upcast(m_collisionObject);
+			if (body && body->hasContactResponse())
+			{
+				result.m_hitPointInWorld = m_hitPointWorld;
+				result.m_hitNormalInWorld = m_hitNormalWorld;
+				result.m_hitNormalInWorld.normalize();
+				result.m_distFraction = m_closestHitFraction;
+				return (void*)body;
+			}
+		}
+		return 0;
+	}
+};
+}  // namespace
+
 void* btDefaultVehicleRaycaster::castRay(const btVector3& from, const btVector3& to, const btCollisionObject* ignoreObj, btVehicleRaycasterResult& result)
 {
-	//	RayResultCallback& resultCallback;
-
-	struct MinDistRayResultCallback : public btCollisionWorld::ClosestRayResultCallback
-	{
-		btScalar m_minDistSq;
-		MinDistRayResultCallback(const btVector3& from, const btVector3& to, const btCollisionObject* ignoreObj, btScalar minDistSq)
-			: ClosestRayResultCallback(from, to, ignoreObj), m_minDistSq(minDistSq) {}
-
-		virtual btScalar addSingleResult(btCollisionWorld::LocalRayResult& rayResult, bool normalInWorldSpace)
-		{
-			btVector3 hitPoint;
-			hitPoint.setInterpolate3(m_rayFromWorld, m_rayToWorld, rayResult.m_hitFraction);
-			if ((hitPoint - m_rayFromWorld).length2() < m_minDistSq)
-				return m_closestHitFraction;
-			return ClosestRayResultCallback::addSingleResult(rayResult, normalInWorldSpace);
-		}
-	};
-	MinDistRayResultCallback rayCallback(from, to, ignoreObj, m_minHitDistSq);
-	rayCallback.m_collisionFilterGroup = btBroadphaseProxy::CharacterFilter | addedFilterMask;
-	rayCallback.m_collisionFilterMask = btBroadphaseProxy::AllFilter;
-
+	MinDistRayResultCallback rayCallback(from, to, ignoreObj, m_minHitDistSq, btBroadphaseProxy::CharacterFilter | addedFilterMask);
 	m_dynamicsWorld->rayTest(from, to, rayCallback);
+	return rayCallback.getResult(result);
+}
 
-	if (rayCallback.hasHit())
+void btDefaultVehicleRaycaster::castRays(const btVector3* from, const btVector3* to, int numRays, const btCollisionObject* ignoreObj, btVehicleRaycasterResult* results, void** hitObjects)
+{
+	constexpr int MAX_RAYS = 8;
+	if (numRays > MAX_RAYS)
 	{
-		const btRigidBody* body = btRigidBody::upcast(rayCallback.m_collisionObject);
-		if (body && body->hasContactResponse())
-		{
-			result.m_hitPointInWorld = rayCallback.m_hitPointWorld;
-			result.m_hitNormalInWorld = rayCallback.m_hitNormalWorld;
-			result.m_hitNormalInWorld.normalize();
-			result.m_distFraction = rayCallback.m_closestHitFraction;
-			return (void*)body;
-		}
+		btVehicleRaycaster::castRays(from, to, numRays, ignoreObj, results, hitObjects);
+		return;
 	}
-	return 0;
+
+	alignas(MinDistRayResultCallback) unsigned char storage[MAX_RAYS][sizeof(MinDistRayResultCallback)];
+	btCollisionWorld::RayResultCallback* callbacks[MAX_RAYS];
+	for (int i = 0; i < numRays; i++)
+		callbacks[i] = new (storage[i]) MinDistRayResultCallback(from[i], to[i], ignoreObj, m_minHitDistSq, btBroadphaseProxy::CharacterFilter | addedFilterMask);
+
+	m_dynamicsWorld->rayTestMulti(from, to, callbacks, numRays);
+
+	for (int i = 0; i < numRays; i++)
+	{
+		MinDistRayResultCallback* callback = (MinDistRayResultCallback*)callbacks[i];
+		hitObjects[i] = callback->getResult(results[i]);
+		callback->~MinDistRayResultCallback();
+	}
 }

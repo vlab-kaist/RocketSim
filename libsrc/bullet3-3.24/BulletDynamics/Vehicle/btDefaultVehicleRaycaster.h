@@ -36,6 +36,7 @@ public:
 	}
 
 	virtual void* castRay(const btVector3& from, const btVector3& to, const btCollisionObject* ignoreObj, btVehicleRaycasterResult& result);
+	virtual void castRays(const btVector3* from, const btVector3* to, int numRays, const btCollisionObject* ignoreObj, btVehicleRaycasterResult* results, void** hitObjects);
 };
 
 #endif  //BT_RAYCASTVEHICLE_H

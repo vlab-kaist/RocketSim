@@ -93,6 +93,13 @@ void btBvhTriangleMeshShape::performRaycast(btTriangleCallback* callback, const 
 	m_bvh->reportRayOverlappingNodex(&myNodeCallback, raySource, rayTarget);
 }
 
+void btBvhTriangleMeshShape::performRaycasts(btTriangleCallback** callbacks, const btVector3* raySources, const btVector3* rayTargets, int numRays)
+{
+	MyMultiNodeOverlapCallback myNodeCallback(callbacks, m_meshInterface);
+
+	m_bvh->reportRaysOverlappingNodex(&myNodeCallback, raySources, rayTargets, numRays);
+}
+
 void btBvhTriangleMeshShape::performConvexcast(btTriangleCallback* callback, const btVector3& raySource, const btVector3& rayTarget, const btVector3& aabbMin, const btVector3& aabbMax)
 {
 	MyNodeOverlapCallback myNodeCallback(callback, m_meshInterface);

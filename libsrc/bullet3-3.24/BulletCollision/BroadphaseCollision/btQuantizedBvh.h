@@ -169,6 +169,22 @@ struct MyNodeOverlapCallback : public btNodeOverlapCallback
 	void processNode(int nodeSubPart, int nodeTriangleIndex);
 };
 
+// RocketSim: gives each ray of a multi-ray walk the triangles its own walk would give it
+struct MyMultiNodeOverlapCallback
+{
+	class btStridingMeshInterface* m_meshInterface;
+	class btTriangleCallback** m_callbacks;
+	btVector3 m_triangle[3];
+
+	MyMultiNodeOverlapCallback(class btTriangleCallback** callbacks, class btStridingMeshInterface* meshInterface)
+		: m_meshInterface(meshInterface),
+		m_callbacks(callbacks) {
+	}
+
+	// Loads the triangle once and passes it to the callbacks of the rays in rayMask, in ray order
+	void processNode(int nodeSubPart, int nodeTriangleIndex, unsigned rayMask);
+};
+
 #include "../../LinearMath/btAlignedAllocator.h"
 #include "../../LinearMath/btAlignedObjectArray.h"
 
@@ -326,6 +342,10 @@ public:
 
 	void reportAabbOverlappingNodex(btNodeOverlapCallback * nodeCallback, const btVector3& aabbMin, const btVector3& aabbMax) const;
 	void reportRayOverlappingNodex(btNodeOverlapCallback * nodeCallback, const btVector3& raySource, const btVector3& rayTarget) const;
+
+	// RocketSim: walks the tree once for several rays (at most 32). Each ray visits the nodes and gets the
+	// triangles that reportRayOverlappingNodex() would give it, in the same order.
+	void reportRaysOverlappingNodex(MyMultiNodeOverlapCallback * nodeCallback, const btVector3* raySources, const btVector3* rayTargets, int numRays) const;
 	void reportBoxCastOverlappingNodex(btNodeOverlapCallback * nodeCallback, const btVector3& raySource, const btVector3& rayTarget, const btVector3& aabbMin, const btVector3& aabbMax) const;
 
 	SIMD_FORCE_INLINE void quantize(unsigned short* out, const btVector3& point, int isMax) const

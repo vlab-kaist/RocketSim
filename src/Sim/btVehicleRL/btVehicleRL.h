@@ -90,8 +90,10 @@ public:
 	}
 
 	const btTransform& getChassisWorldTransform() const;
-
-	float rayCast(btWheelInfoRL& wheel);
+	// The ray of a wheel (also updates the wheel's world-space hard point and directions)
+	void getRay(btWheelInfoRL& wheel, btVector3& source, btVector3& target);
+	// Sets a wheel's contact from its ray's result
+	float rayCast(btWheelInfoRL& wheel, btCollisionObject* object, const btVehicleRaycaster::btVehicleRaycasterResult& rayResults);
 
 	void updateVehicleFirst(float step);
 	void updateVehicleSecond(float step);

@@ -31,6 +31,13 @@ struct btVehicleRaycaster
 	};
 
 	virtual void* castRay(const btVector3& from, const btVector3& to, const btCollisionObject* ignoreObj, btVehicleRaycasterResult& result) = 0;
+
+	// RocketSim: castRay() for several rays at once; hitObjects[i] gets what castRay() would return for ray i
+	virtual void castRays(const btVector3* from, const btVector3* to, int numRays, const btCollisionObject* ignoreObj, btVehicleRaycasterResult* results, void** hitObjects)
+	{
+		for (int i = 0; i < numRays; i++)
+			hitObjects[i] = castRay(from[i], to[i], ignoreObj, results[i]);
+	}
 };
 
 #endif  //BT_VEHICLE_RAYCASTER_H

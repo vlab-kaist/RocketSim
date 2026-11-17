@@ -134,26 +134,25 @@ void btVehicleRL::updateWheelTransformsWS(btWheelInfoRL& wheel) {
 	wheel.m_raycastInfo.m_wheelAxleWS = chassisTrans.getBasis() * wheel.m_wheelAxleCS;
 }
 
-float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
+void btVehicleRL::getRay(btWheelInfoRL& wheel, btVector3& source, btVector3& target) {
 	updateWheelTransformsWS(wheel);
-
-	float depth = -1;
 
 	float suspensionTravel = wheel.m_maxSuspensionTravelCm / 100;
 	// As in RocketSim v3, the ray is not shortened by SUSPENSION_SUBTRACTION (only the pushback threshold is)
 	float realRayLength = wheel.getSuspensionRestLength() + suspensionTravel + wheel.m_wheelsRadius;
 
 	// See: I21
-	btVector3 source = wheel.m_raycastInfo.m_hardPointWS;
-	btVector3 target = source + (wheel.m_raycastInfo.m_wheelDirectionWS * realRayLength);
+	source = wheel.m_raycastInfo.m_hardPointWS;
+	target = source + (wheel.m_raycastInfo.m_wheelDirectionWS * realRayLength);
 	wheel.m_raycastInfo.m_contactPointWS = target;
 	wheel.m_raycastInfo.m_groundObject = NULL;
+}
 
-	// See: I22
-	btVehicleRaycaster::btVehicleRaycasterResult rayResults;
-	
-	btAssert(m_vehicleRaycaster);
-	btCollisionObject* object = (btCollisionObject*)m_vehicleRaycaster->castRay(source, target, m_chassisBody, rayResults);
+float btVehicleRL::rayCast(btWheelInfoRL& wheel, btCollisionObject* object, const btVehicleRaycaster::btVehicleRaycasterResult& rayResults) {
+	float depth = -1;
+
+	float suspensionTravel = wheel.m_maxSuspensionTravelCm / 100;
+	float realRayLength = wheel.getSuspensionRestLength() + suspensionTravel + wheel.m_wheelsRadius;
 
 	// See: I23
 	if (object) {
@@ -242,8 +241,23 @@ void btVehicleRL::updateVehicleFirst(float step) {
 
 	// A zero step only refreshes the contacts (after a state set) and must not push anything
 	m_applyHitEffects = step > 0;
-	for (int i = 0; i < m_wheelInfo.size(); i++)
-		rayCast(m_wheelInfo[i]);
+
+	// The traces only depend on where the bodies are, which the reactions on hit bodies don't change,
+	// so all wheels are traced together, then handled in order
+	constexpr int MAX_WHEELS = 8;
+	int numWheels = m_wheelInfo.size();
+	btAssert(numWheels <= MAX_WHEELS);
+	btVector3 sources[MAX_WHEELS], targets[MAX_WHEELS];
+	btVehicleRaycaster::btVehicleRaycasterResult rayResults[MAX_WHEELS];
+	void* hitObjects[MAX_WHEELS];
+	for (int i = 0; i < numWheels; i++)
+		getRay(m_wheelInfo[i], sources[i], targets[i]);
+
+	btAssert(m_vehicleRaycaster);
+	m_vehicleRaycaster->castRays(sources, targets, numWheels, m_chassisBody, rayResults, hitObjects);
+
+	for (int i = 0; i < numWheels; i++)
+		rayCast(m_wheelInfo[i], (btCollisionObject*)hitObjects[i], rayResults[i]);
 }
 
 // The friction impulses are determined here, after the car has set this tick's

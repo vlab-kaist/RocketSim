@@ -17,6 +17,7 @@ subject to the following restrictions:
 
 #include "../../LinearMath/btAabbUtil2.h"
 #include "../CollisionShapes/btStridingMeshInterface.h"
+#include "../CollisionShapes/btTriangleCallback.h"
 
 #define RAYAABB2
 
@@ -735,6 +736,125 @@ void btQuantizedBvh::reportRayOverlappingNodex(btNodeOverlapCallback* nodeCallba
 	} else {
 		walkStacklessTreeAgainstRayNoAABB(nodeCallback, raySource, rayTarget, 0, m_curNodeIndex);
 	}
+}
+
+void btQuantizedBvh::reportRaysOverlappingNodex(MyMultiNodeOverlapCallback* nodeCallback, const btVector3* raySources, const btVector3* rayTargets, int numRays) const
+{
+	btAssert(numRays > 0 && numRays <= 32);
+	if (!m_useQuantization) {
+		for (int r = 0; r < numRays; r++) {
+			MyNodeOverlapCallback single(nodeCallback->m_callbacks[r], nodeCallback->m_meshInterface);
+			walkStacklessTreeAgainstRayNoAABB(&single, raySources[r], rayTargets[r], 0, m_curNodeIndex);
+		}
+		return;
+	}
+
+	// Per-ray setup, as in walkStacklessQuantizedTreeAgainstRay() (with no box cast extents)
+	constexpr int MAX_RAYS = 32;
+	btVector3 rayDirection[MAX_RAYS];
+	unsigned int sign[MAX_RAYS][3];
+	btScalar lambdaMax[MAX_RAYS];
+	unsigned short int quantizedQueryAabbMin[MAX_RAYS][3];
+	unsigned short int quantizedQueryAabbMax[MAX_RAYS][3];
+	// Index of the next node each ray's own walk visits
+	int nextIndex[MAX_RAYS];
+	for (int r = 0; r < numRays; r++) {
+		const btVector3& raySource = raySources[r];
+		const btVector3& rayTarget = rayTargets[r];
+		btVector3 dir = (rayTarget - raySource);
+		dir.safeNormalize();
+		lambdaMax[r] = dir.dot(rayTarget - raySource);
+		dir[0] = dir[0] == btScalar(0.0) ? btScalar(BT_LARGE_FLOAT) : btScalar(1.0) / dir[0];
+		dir[1] = dir[1] == btScalar(0.0) ? btScalar(BT_LARGE_FLOAT) : btScalar(1.0) / dir[1];
+		dir[2] = dir[2] == btScalar(0.0) ? btScalar(BT_LARGE_FLOAT) : btScalar(1.0) / dir[2];
+		rayDirection[r] = dir;
+		sign[r][0] = dir[0] < 0.0;
+		sign[r][1] = dir[1] < 0.0;
+		sign[r][2] = dir[2] < 0.0;
+
+		btVector3 rayAabbMin = raySource;
+		btVector3 rayAabbMax = raySource;
+		rayAabbMin.setMin(rayTarget);
+		rayAabbMax.setMax(rayTarget);
+		quantizeWithClamp(quantizedQueryAabbMin[r], rayAabbMin, 0);
+		quantizeWithClamp(quantizedQueryAabbMax[r], rayAabbMax, 1);
+		nextIndex[r] = 0;
+	}
+
+	const int endNodeIndex = m_curNodeIndex;
+	int curIndex = 0;
+	while (curIndex < endNodeIndex) {
+		const btQuantizedBvhNode* node = &m_quantizedContiguousNodes[curIndex];
+		const bool isLeafNode = node->isLeafNode();
+		bool haveBounds = false;
+		btVector3 bounds[2];
+		unsigned leafMask = 0;
+		int nextCurIndex = endNodeIndex;
+
+		for (int r = 0; r < numRays; r++) {
+			if (nextIndex[r] == curIndex) {
+				unsigned rayBoxOverlap = 0;
+				if (testQuantizedAabbAgainstQuantizedAabb(quantizedQueryAabbMin[r], quantizedQueryAabbMax[r], node->m_quantizedAabbMin, node->m_quantizedAabbMax)) {
+					if (!haveBounds) {
+						bounds[0] = unQuantize(node->m_quantizedAabbMin);
+						bounds[1] = unQuantize(node->m_quantizedAabbMax);
+						haveBounds = true;
+					}
+					btScalar param = 1.0;
+					rayBoxOverlap = btRayAabb2(raySources[r], rayDirection[r], sign[r], bounds, param, 0.0f, lambdaMax[r]);
+				}
+
+				if (isLeafNode && rayBoxOverlap)
+					leafMask |= 1u << r;
+
+				if (rayBoxOverlap || isLeafNode)
+					nextIndex[r] = curIndex + 1;
+				else
+					nextIndex[r] = curIndex + node->getEscapeIndex();
+			}
+			nextCurIndex = btMin(nextCurIndex, nextIndex[r]);
+		}
+
+		if (leafMask)
+			nodeCallback->processNode(node->getPartId(), node->getTriangleIndex(), leafMask);
+
+		curIndex = nextCurIndex;
+	}
+}
+
+void MyMultiNodeOverlapCallback::processNode(int nodeSubPart, int nodeTriangleIndex, unsigned rayMask) {
+	const unsigned char* vertexbase;
+	int numverts;
+	int stride;
+	const unsigned char* indexbase;
+	int indexstride;
+	int numfaces;
+
+	m_meshInterface->getLockedReadOnlyVertexIndexBase(
+		&vertexbase,
+		numverts,
+		stride,
+		&indexbase,
+		indexstride,
+		numfaces,
+		nodeSubPart);
+
+	unsigned int* gfxbase = (unsigned int*)(indexbase + nodeTriangleIndex * indexstride);
+
+	const btVector3& meshScaling = m_meshInterface->getScaling();
+	for (int j = 2; j >= 0; j--) {
+		int graphicsindex = gfxbase[j];
+		float* graphicsbase = (float*)(vertexbase + graphicsindex * stride);
+		m_triangle[j] = btVector3(
+			graphicsbase[0] * meshScaling.getX(),
+			graphicsbase[1] * meshScaling.getY(),
+			graphicsbase[2] * meshScaling.getZ());
+	}
+
+	for (int r = 0; rayMask; r++, rayMask >>= 1)
+		if (rayMask & 1)
+			m_callbacks[r]->processTriangle(m_triangle, nodeSubPart, nodeTriangleIndex);
+	m_meshInterface->unLockReadOnlyVertexBase(nodeSubPart);
 }
 
 void btQuantizedBvh::reportBoxCastOverlappingNodex(btNodeOverlapCallback* nodeCallback, const btVector3& raySource, const btVector3& rayTarget, const btVector3& aabbMin, const btVector3& aabbMax) const

@@ -64,6 +64,8 @@ public:
 	}
 
 	void performRaycast(btTriangleCallback * callback, const btVector3& raySource, const btVector3& rayTarget);
+	// RocketSim: performRaycast() for several rays in one walk of the tree (each ray gets the same triangles, in the same order)
+	void performRaycasts(btTriangleCallback** callbacks, const btVector3* raySources, const btVector3* rayTargets, int numRays);
 	void performConvexcast(btTriangleCallback * callback, const btVector3& boxSource, const btVector3& boxTarget, const btVector3& boxMin, const btVector3& boxMax);
 
 	void processAllTriangles(btTriangleCallback* callback, const btVector3& aabbMin, const btVector3& aabbMax) const;

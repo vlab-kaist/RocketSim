@@ -413,6 +413,10 @@ public:
 	/// This allows for several queries: first hit, all hits, any hit, dependent on the value returned by the callback.
 	virtual void rayTest(const btVector3& rayFromWorld, const btVector3& rayToWorld, RayResultCallback& resultCallback) const;
 
+	/// RocketSim: rayTest() for several short rays (the wheel rays of a car), at most 32. Each ray gets the result
+	/// rayTest() would give it, but the broadphase cell and each triangle mesh tree are walked once for all of them.
+	void rayTestMulti(const btVector3* raysFromWorld, const btVector3* raysToWorld, RayResultCallback** resultCallbacks, int numRays) const;
+
 	/// convexTest performs a swept convex cast on all objects in the btCollisionWorld, and calls the resultCallback
 	/// This allows for several queries: first hit, all hits, any hit, dependent on the value return by the callback.
 	void convexSweepTest(const btConvexShape* castShape, const btTransform& from, const btTransform& to, ConvexResultCallback& resultCallback, btScalar allowedCcdPenetration = btScalar(0.)) const;
