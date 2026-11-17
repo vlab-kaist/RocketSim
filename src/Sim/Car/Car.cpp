@@ -1,4 +1,5 @@
 #include "Car.h"
+#include "../../RSProf.h"
 #include "../../RLConst.h"
 
 #include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btDynamicsWorld.h"
@@ -147,6 +148,7 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 	}
 
 	float forwardSpeed_UU = _bulletVehicle.getForwardSpeed() * BT_TO_UU;
+	{ RS_PROF(4, "  car logic (wheels..boost)");
 	_UpdateWheels(tickTime, mutatorConfig, numWheelsInContact, forwardSpeed_UU);
 
 	if (_internalState.isOnGround) {
@@ -174,9 +176,13 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 	_internalState.worldContact.hasContact = false;
 
 	_UpdateBoost(tickTime, mutatorConfig, forwardSpeed_UU);
+	}
 
 	// Vehicle update: trace the wheels, set their friction from the new contacts, then apply suspension and friction
+	{ RS_PROF(5, "  vehicle: trace");
 	_bulletVehicle.updateVehicleFirst(tickTime);
+	}
+	RS_PROF(6, "  vehicle: friction+suspension");
 	_UpdateWheelContacts(false);
 	_UpdateWheelFriction();
 	if (_internalState.isOnGround == false) {

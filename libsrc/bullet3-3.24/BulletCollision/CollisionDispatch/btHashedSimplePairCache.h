@@ -67,7 +67,7 @@ public:
 	virtual btSimplePair* addOverlappingPair(int indexA, int indexB)
 	{
 #ifdef BT_DEBUG_COLLISION_PAIRS
-		gAddedSimplePairs++;
+		/* RocketSim: shared debug counter, contended across threads */ // gAddedSimplePairs++;
 #endif
 
 		return internalAddPair(indexA, indexB);

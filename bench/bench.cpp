@@ -13,6 +13,7 @@
 #include <string>
 
 #include "RocketSim.h"
+#include "RSProf.h"
 
 using namespace RocketSim;
 
@@ -47,7 +48,9 @@ int main(int argc, char** argv) {
 	bool ballOnly = argc > 4 && std::string(argv[4]) == "ball";
 
 	RocketSim::Init(argv[1], true);
-	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	ArenaConfig cfg = {};
+	cfg.quantizePhysics = getenv("NOQ") == nullptr;
+	Arena* arena = Arena::Create(GameMode::SOCCAR, cfg);
 	std::vector<Car*> cars;
 	if (!ballOnly)
 		for (int t = 0; t < 2; t++)
@@ -88,6 +91,13 @@ int main(int argc, char** argv) {
 	double dt = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 	std::printf("cars=%zu ticks=%d time=%.3fs ticks/s=%.0f checksum=%016llx\n", cars.size(), ticks, dt, ticks / dt,
 	            (unsigned long long)checksum);
+#ifdef RS_PROFILE
+	uint64_t total = 0;
+	for (int i = 0; i < 4; i++) total += RSProf::acc[i];
+	for (int i = 0; i < 32; i++)
+		if (RSProf::names[i])
+			std::printf("%-34s %5.1f%%\n", RSProf::names[i], 100.0 * RSProf::acc[i] / total);
+#endif
 	delete arena;
 	return 0;
 }

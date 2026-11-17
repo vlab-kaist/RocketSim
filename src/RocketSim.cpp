@@ -1,4 +1,7 @@
 #include "RocketSim.h"
+#include "../libsrc/bullet3-3.24/LinearMath/btAlignedAllocator.h"
+#include <mutex>
+#include <cstdlib>
 
 #include "../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btBvhTriangleMeshShape.h"
 #include "../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btTriangleMesh.h"
@@ -63,7 +66,26 @@ std::vector<btBvhTriangleMeshShape*>& RocketSim::GetArenaCollisionShapes(GameMod
 	return arenaCollisionMeshes[gameMode];
 }
 
+// Bullet allocations are aligned to and padded to whole cache lines, so that arenas stepped on different
+// threads never share a cache line (false sharing made multi-threaded stepping several times slower)
+static void* CacheLineAlignedAlloc(size_t size, int alignment) {
+	constexpr size_t LINE = 64;
+	size_t align = RS_MAX((size_t)alignment, LINE);
+	size_t padded = (size + LINE - 1) / LINE * LINE;
+	return std::aligned_alloc(align, padded ? padded : LINE);
+}
+
+static void CacheLineAlignedFree(void* ptr) {
+	std::free(ptr);
+}
+
+static void SetupAllocator() {
+	static std::once_flag once;
+	std::call_once(once, []() { btAlignedAllocSetCustomAligned(CacheLineAlignedAlloc, CacheLineAlignedFree); });
+}
+
 void RocketSim::Init(std::filesystem::path collisionMeshesFolder, bool silent) {
+	SetupAllocator();
 
 	std::map<GameMode, std::vector<FileData>> meshFileMap = {};
 
@@ -101,6 +123,7 @@ void RocketSim::Init(std::filesystem::path collisionMeshesFolder, bool silent) {
 }
 
 void RocketSim::InitFromMem(const std::map<GameMode, std::vector<FileData>>& meshFilesMap, bool silent) {
+	SetupAllocator();
 
 	constexpr char MSG_PREFIX[] = "RocketSim::Init(): ";
 

@@ -67,7 +67,7 @@ pos, rotMat, vel, angVel, \
 hsInfo.yTargetDir, hsInfo.curTargetSpeed, hsInfo.timeSinceHit, \
 dsInfo.chargeLevel, dsInfo.accumulatedHitForce, dsInfo.yTargetDir, dsInfo.hasDamaged, dsInfo.lastDamageTick \
 
-class Ball {
+class alignas(64) Ball {
 public:
 
 	BallState _internalState;

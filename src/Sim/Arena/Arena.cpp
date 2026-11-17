@@ -1,4 +1,7 @@
 #include "Arena.h"
+#include <algorithm>
+#include "../../RSProf.h"
+#include <xmmintrin.h>
 #include "../../RocketSim.h"
 
 #include "../../../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btAxisSweep3.h"
@@ -79,10 +82,10 @@ bool Arena::_AddCarFromPtr(Car* car) {
 	car->id = ++_lastCarID;
 
 	if (_carIDMap.find(car->id) == _carIDMap.end()) {
-		assert(!_cars.count(car));
-		
+		assert(std::find(_cars.begin(), _cars.end(), car) == _cars.end());
+
 		_carIDMap[car->id] = car;
-		_cars.insert(car);
+		_cars.push_back(car);
 		return true;
 
 	} else {
@@ -96,7 +99,7 @@ bool Arena::RemoveCar(uint32_t id) {
 	if (itr != _carIDMap.end()) {
 		Car* car = itr->second;
 		_carIDMap.erase(itr);
-		_cars.erase(car);
+		_cars.erase(std::find(_cars.begin(), _cars.end(), car));
 		_bulletWorld.removeCollisionObject(&car->_rigidBody);
 		if (ownsCars)
 			delete car;
@@ -348,15 +351,28 @@ void Arena::_BtCallback_OnCarBallCollision(Car* car, Ball* ball, btManifoldPoint
 
 // Physics state quantization at the start of each tick, ported from RocketSim v3 (rocketsim/src/sim/quantize.rs)
 namespace Quantize {
+	// Same results as floorf/truncf/nearbyintf (default rounding) without the library calls,
+	// for the value ranges used here
+	static inline float FastFloor(float x) {
+		if (!(fabsf(x) < 2147483648.f) || x == 0)
+			return floorf(x);
+		float t = (float)(int32_t)x;
+		return (t > x) ? t - 1 : t;
+	}
+	static inline int RoundToEvenInt(float x) {
+		return _mm_cvtss_si32(_mm_set_ss(x));
+	}
+
 	static float RoundPosition(float v, float scale) {
-		return floorf(v * scale + 0.5f) * (1 / scale);
+		return FastFloor(v * scale + 0.5f) * (1 / scale);
 	}
 
 	// Truncates towards zero, then nudges a tenth of a step away from zero
 	static float RoundVelocity(float v, float scale) {
 		float invScale = 1 / scale;
 		float scaled = v * scale;
-		float rounded = (fabsf(scaled) < 2147483648.f) ? truncf(scaled) * invScale : (float)(int32_t)scaled * invScale;
+		// (A truncated -0 becomes +0 either way, since the nudge below adds +0 to it)
+		float rounded = (float)(int32_t)scaled * invScale;
 		float sign = (rounded > 0) ? 1.f : ((rounded < 0) ? -1.f : 0.f);
 		return rounded + sign * (0.1f * invScale);
 	}
@@ -427,7 +443,7 @@ namespace Quantize {
 		float maxF = (float)MAX;
 		float v = ((c * 1.41421356f) * 0.5f + 0.5f) * maxF;
 		v = (v + v) + 0.5f;
-		int k = RS_CLAMP(((int)nearbyintf(v)) >> 1, 0, MAX);
+		int k = RS_CLAMP(RoundToEvenInt(v) >> 1, 0, MAX);
 		float r = k / maxF - 0.5f;
 		return (r + r) * 0.70710677f;
 	}
@@ -459,7 +475,7 @@ namespace Quantize {
 		float clamped = RS_CLAMP(x, -1.f, 1.f);
 		float y = (clamped < 0) ? RS_MAX(clamped * 128.f, -128.f) : RS_MIN(clamped * 127.f, 127.f);
 		float w = ((y + 128.f) + (y + 128.f)) + 0.5f;
-		int byte = (((int)nearbyintf(w)) >> 1) & 0xFF;
+		int byte = (RoundToEvenInt(w) >> 1) & 0xFF;
 		float s = (float)byte - 128.f;
 		return (byte < 0x80) ? (s * (1.f / 128.f)) : (s / 127.f);
 	}
@@ -985,7 +1001,9 @@ void Arena::Step(int ticksToSimulate) {
 
 		_bulletWorld.setWorldUserInfo(this);
 
+		{ RS_PROF(0, "quantize");
 		if (_config.quantizePhysics) {
+			RS_PROF(7, "  quantize bodies");
 			for (Car* car : _cars) {
 				Quantize::QuantizeControls(car->controls);
 				Quantize::QuantizeBody(car->_rigidBody, true);
@@ -994,9 +1012,12 @@ void Arena::Step(int ticksToSimulate) {
 			Quantize::QuantizeBody(ball->_rigidBody, !_config.noBallRot || gameMode == GameMode::SNOWDAY);
 		}
 
+		{ RS_PROF(8, "  tick start states");
 		for (Car* car : _cars)
 			car->_tickStartState = car->GetState();
 		ball->_tickStartState = ball->GetState();
+		}
+		}
 
 
 		bool ballOnly = _cars.empty();
@@ -1009,8 +1030,10 @@ void Arena::Step(int ticksToSimulate) {
 		for (Car* car : _cars)
 			car->_ApplyFlipZDamp();
 
+		{ RS_PROF(1, "car pretick");
 		for (Car* car : _cars)
 			car->_PreTickUpdate(gameMode, tickTime, _mutatorConfig);
+		}
 
 		if (hasArenaStuff && !ballOnly) {
 			for (BoostPad* pad : _boostPads)
@@ -1034,11 +1057,14 @@ void Arena::Step(int ticksToSimulate) {
 			ball->_rigidBody.setGravity(btVector3(0, 0, 0));
 
 		// Update world
+		{ RS_PROF(2, "stepSimulation");
 		_bulletWorld.stepSimulation(tickTime, 0, tickTime);
+		}
 
 		if (ballWokeThisTick)
 			ball->_rigidBody.setGravity(ballGravity);
 
+		RS_PROF(3, "post (rest of tick)");
 		for (Car* car : _cars) {
 			car->_PostTickUpdate(gameMode, tickTime, _mutatorConfig);
 			car->_FinishPhysicsTick(_mutatorConfig);

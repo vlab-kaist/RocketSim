@@ -33,7 +33,7 @@ struct BoostPadState {
 #define BOOSTPAD_SERIALIZATION_FIELDS \
 isActive, cooldown, prevLockedCarID
 
-class BoostPad {
+class alignas(64) BoostPad {
 public:
 	BoostPadConfig config;
 

@@ -80,16 +80,6 @@ void btVehicleRL::updateWheelBasis(int wheelIndex) {
 	//	up = right.cross(fwd);
 	//	up.normalize();
 
-	// Same as btQuaternion(up, m_steerAngle), with the trig only redone when the angle changes
-	if (wheel.m_steerAngle != wheel.m_cachedSteerAngle) {
-		wheel.m_cachedSteerAngle = wheel.m_steerAngle;
-		wheel.m_steerSinHalf = btSin(wheel.m_steerAngle * btScalar(0.5));
-		wheel.m_steerCosHalf = btCos(wheel.m_steerAngle * btScalar(0.5));
-	}
-	btScalar s = wheel.m_steerSinHalf / up.length();
-	btQuaternion steeringOrn(up.x() * s, up.y() * s, up.z() * s, wheel.m_steerCosHalf);
-	btMatrix3x3 steeringMat(steeringOrn);
-
 	btMatrix3x3 basis2;
 	basis2[0][m_indexRightAxis] = -right[0];
 	basis2[1][m_indexRightAxis] = -right[1];
@@ -102,7 +92,20 @@ void btVehicleRL::updateWheelBasis(int wheelIndex) {
 	basis2[0][m_indexForwardAxis] = fwd[0];
 	basis2[1][m_indexForwardAxis] = fwd[1];
 	basis2[2][m_indexForwardAxis] = fwd[2];
-	wheel.m_worldTransform.setBasis(steeringMat * basis2);
+	if (wheel.m_steerAngle == 0) {
+		// No steering rotation (rear wheels, or driving straight)
+		wheel.m_worldTransform.setBasis(basis2);
+	} else {
+		// Same as btQuaternion(up, m_steerAngle), with the trig only redone when the angle changes
+		if (wheel.m_steerAngle != wheel.m_cachedSteerAngle) {
+			wheel.m_cachedSteerAngle = wheel.m_steerAngle;
+			wheel.m_steerSinHalf = btSin(wheel.m_steerAngle * btScalar(0.5));
+			wheel.m_steerCosHalf = btCos(wheel.m_steerAngle * btScalar(0.5));
+		}
+		btScalar s = wheel.m_steerSinHalf / up.length();
+		btQuaternion steeringOrn(up.x() * s, up.y() * s, up.z() * s, wheel.m_steerCosHalf);
+		wheel.m_worldTransform.setBasis(btMatrix3x3(steeringOrn) * basis2);
+	}
 	wheel.m_worldTransform.setOrigin(
 		wheel.m_raycastInfo.m_hardPointWS + wheel.m_raycastInfo.m_wheelDirectionWS * wheel.m_raycastInfo.m_suspensionLength);
 }
@@ -234,13 +237,8 @@ const btTransform& btVehicleRL::getChassisWorldTransform() const {
 }
 
 void btVehicleRL::updateVehicleFirst(float step) {
-
-	for (int i = 0; i < getNumWheels(); i++)
-		updateWheelTransform(i);
-
-	//
-	// simulate suspension
-	//
+	// The wheel bases are rebuilt after this tick's steering is set (Car::_UpdateWheelFriction);
+	// the traces only need the world-space hard points, which rayCast() updates itself
 
 	// A zero step only refreshes the contacts (after a state set) and must not push anything
 	m_applyHitEffects = step > 0;
@@ -251,9 +249,7 @@ void btVehicleRL::updateVehicleFirst(float step) {
 // The friction impulses are determined here, after the car has set this tick's
 // steering, engine force and brake, so controls take effect on the tick they are given
 void btVehicleRL::updateVehicleSecond(float step) {
-	for (int i = 0; i < getNumWheels(); i++)
-		updateWheelBasis(i);
-
+	// Expects the wheel bases to be current (Car::_UpdateWheelFriction rebuilds them)
 	updateSuspension(step);
 	calcFrictionImpulses(step);
 	applyFrictionImpulses(step);
@@ -352,15 +348,18 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
 
 			float sideImpulse;
 
-			// Get sideways friction force, always against a fixed ground (even on the ball or a car)
-			resolveSingleBilateral(
-				*m_chassisBody, wheel.m_raycastInfo.m_contactPointWS,
-				getFixedBody(), wheel.m_raycastInfo.m_contactPointWS,
-				0,
-				axleDir,
-				sideImpulse,
-				timeStep
-			);
+			// Get sideways friction force, always against a fixed ground (even on the ball or a car).
+			// Same as resolveSingleBilateral() against getFixedBody(), whose terms are all zero, but without
+			// touching that shared static body (writing to it from every thread stalls multi-threaded use).
+			{
+				btVector3 relPos1 = wheel.m_raycastInfo.m_contactPointWS - m_chassisBody->getCenterOfMassPosition();
+				btVector3 vel1 = m_chassisBody->getVelocityInLocalPoint(relPos1);
+				btVector3 aJ = m_chassisBody->getCenterOfMassTransform().getBasis().transpose() * relPos1.cross(axleDir);
+				btVector3 minvJt0 = m_chassisBody->getInvInertiaDiagLocal() * aJ;
+				btScalar jacDiagAB = m_chassisBody->getInvMass() + minvJt0.dot(aJ);
+				btScalar relVel = axleDir.dot(vel1);
+				sideImpulse = btScalar(-0.2) * relVel * (btScalar(1) / jacDiagAB);
+			}
 
 			float rollingFriction;
 			if (wheel.m_engineForce == 0) {

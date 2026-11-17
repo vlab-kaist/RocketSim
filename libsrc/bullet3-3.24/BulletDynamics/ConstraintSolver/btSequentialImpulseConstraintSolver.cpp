@@ -289,7 +289,7 @@ static btScalar gResolveSplitPenetrationImpulse_scalar_reference(
 
 	if (c.m_rhsPenetration)
 	{
-		gNumSplitImpulseRecoveries++;
+		/* RocketSim: shared debug counter, contended across threads */ // gNumSplitImpulseRecoveries++;
 		deltaImpulse = c.m_rhsPenetration - btScalar(c.m_appliedPushImpulse) * c.m_cfm;
 		const btScalar deltaVel1Dotn = c.m_contactNormal1.dot(bodyA.internalGetPushVelocity()) + c.m_relpos1CrossNormal.dot(bodyA.internalGetTurnVelocity());
 		const btScalar deltaVel2Dotn = c.m_contactNormal2.dot(bodyB.internalGetPushVelocity()) + c.m_relpos2CrossNormal.dot(bodyB.internalGetTurnVelocity());
@@ -318,7 +318,7 @@ static btScalar gResolveSplitPenetrationImpulse_sse2(btSolverBody& bodyA, btSolv
 	if (!c.m_rhsPenetration)
 		return 0.f;
 
-	gNumSplitImpulseRecoveries++;
+	/* RocketSim: shared debug counter, contended across threads */ // gNumSplitImpulseRecoveries++;
 
 	__m128 cpAppliedImp = _mm_set1_ps(c.m_appliedPushImpulse);
 	__m128 lowerLimit1 = _mm_set1_ps(c.m_lowerLimit);
@@ -1207,6 +1207,8 @@ void btSequentialImpulseConstraintSolver::convertContactSpecial(btCollisionObjec
 
 	float relaxation = 0, rollingFriction = 0;
 	setupContactConstraint(solverConstraint, solverBodyIdA, solverBodyIdB, specialTempManifold, infoGlobal, relaxation, rel_pos1, rel_pos2);
+	// The friction rows for this contact start here (this was left uninitialized, so the friction setup wrote to a random row)
+	solverConstraint.m_frictionIndex = m_tmpSolverContactFrictionConstraintPool.size();
 	convertContactInner(infoGlobal, specialTempManifold, solverConstraint,
 		&obj, NULL, &solverBodyA, &solverBodyB, solverBodyIdA, solverBodyIdB,
 		rel_pos1, rel_pos2, frictionIndex, relaxation, rollingFriction);

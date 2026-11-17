@@ -49,7 +49,7 @@ void btHashedSimplePairCache::removeAllPairs()
 btSimplePair* btHashedSimplePairCache::findPair(int indexA, int indexB)
 {
 #ifdef BT_DEBUG_COLLISION_PAIRS
-	gFindSimplePairs++;
+	/* RocketSim: shared debug counter, contended across threads */ // gFindSimplePairs++;
 #endif
 
 	/*if (indexA > indexB) 
@@ -152,7 +152,7 @@ btSimplePair* btHashedSimplePairCache::internalAddPair(int indexA, int indexB)
 void* btHashedSimplePairCache::removeOverlappingPair(int indexA, int indexB)
 {
 #ifdef BT_DEBUG_COLLISION_PAIRS
-	gRemoveSimplePairs++;
+	/* RocketSim: shared debug counter, contended across threads */ // gRemoveSimplePairs++;
 #endif
 
 	/*if (indexA > indexB) 

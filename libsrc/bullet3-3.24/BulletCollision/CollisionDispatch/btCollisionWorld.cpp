@@ -16,6 +16,7 @@ subject to the following restrictions:
 */
 
 #include "btCollisionWorld.h"
+#include "../../../../src/RSProf.h"
 #include "btCollisionDispatcher.h"
 #include "../CollisionDispatch/btCollisionObject.h"
 #include "../CollisionShapes/btCollisionShape.h"
@@ -210,13 +211,13 @@ void btCollisionWorld::performDiscreteCollisionDetection()
 
 	btDispatcherInfo& dispatchInfo = getDispatchInfo();
 
-	updateAabbs();
+	{ RS_PROF(20, "    aabbs"); updateAabbs(); }
 
-	computeOverlappingPairs();
+	{ RS_PROF(21, "    broadphase pairs"); computeOverlappingPairs(); }
 
 	btCollisionDispatcher* dispatcher = getDispatcher();
 	{
-		BT_PROFILE("dispatchAllCollisionPairs");
+		RS_PROF(22, "    narrowphase");
 		if (dispatcher)
 			dispatcher->dispatchAllCollisionPairs(m_broadphasePairCache->getOverlappingPairCache(), dispatchInfo, m_dispatcher1);
 	}

@@ -165,8 +165,8 @@ void *btAlignedAllocInternal(size_t size, int alignment, int line, const char *f
 	//		printf("big alloc!%d\n", size);
 	//	}
 
-	gTotalBytesAlignedAllocs += size;
-	gNumAlignedAllocs++;
+	/* RocketSim: shared debug counter, contended across threads */ // gTotalBytesAlignedAllocs += size;
+	/* RocketSim: shared debug counter, contended across threads */ // gNumAlignedAllocs++;
 
 	int sz4prt = 4 * sizeof(void *);
 
@@ -206,7 +206,7 @@ void btAlignedFreeInternal(void *ptr, int line, const char *filename)
 
 	if (ptr)
 	{
-		gNumAlignedFree++;
+		/* RocketSim: shared debug counter, contended across threads */ // gNumAlignedFree++;
 
 		btDebugPtrMagic p;
 		p.vptr = ptr;

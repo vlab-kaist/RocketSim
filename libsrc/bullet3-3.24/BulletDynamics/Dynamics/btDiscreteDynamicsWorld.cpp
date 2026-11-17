@@ -14,6 +14,7 @@ subject to the following restrictions:
 */
 
 #include "btDiscreteDynamicsWorld.h"
+#include "../../../../src/RSProf.h"
 
 //collision detection
 #include "../../BulletCollision/CollisionDispatch/btCollisionDispatcher.h"
@@ -400,35 +401,35 @@ void btDiscreteDynamicsWorld::internalSingleStepSimulation(btScalar timeStep)
 	}
 
 	///apply gravity, predict motion
-	predictUnconstraintMotion(timeStep);
+	{ RS_PROF(10, "  predict"); predictUnconstraintMotion(timeStep); }
 
 	btDispatcherInfo& dispatchInfo = getDispatchInfo();
 
 	dispatchInfo.m_timeStep = timeStep;
 	dispatchInfo.m_stepCount = 0;
 
-	createPredictiveContacts(timeStep);
+	{ RS_PROF(11, "  predictive contacts"); createPredictiveContacts(timeStep); }
 
 	///perform collision detection
-	performDiscreteCollisionDetection();
+	{ RS_PROF(12, "  collision detection"); performDiscreteCollisionDetection(); }
 
-	calculateSimulationIslands();
+	{ RS_PROF(13, "  islands"); calculateSimulationIslands(); }
 
 	getSolverInfo().m_timeStep = timeStep;
 
 	///solve contact and other joint constraints
-	solveConstraints(getSolverInfo());
+	{ RS_PROF(14, "  solve"); solveConstraints(getSolverInfo()); }
 
 	///CallbackTriggers();
 
 	///integrate transforms
 
-	integrateTransforms(timeStep);
+	{ RS_PROF(15, "  integrate"); integrateTransforms(timeStep); }
 
 	///update vehicle simulation
 	updateActions(timeStep);
 
-	updateActivationState(timeStep);
+	{ RS_PROF(16, "  activation"); updateActivationState(timeStep); }
 
 	if (0 != m_internalTickCallback)
 	{
@@ -804,7 +805,7 @@ void btDiscreteDynamicsWorld::createPredictiveContactsInternal(btRigidBody** bod
 				BT_PROFILE("predictive convexSweepTest");
 				if (body->getCollisionShape()->isConvex())
 				{
-					gNumClampedCcdMotions++;
+					/* RocketSim: shared debug counter, contended across threads */ // gNumClampedCcdMotions++;
 #ifdef PREDICTIVE_CONTACT_USE_STATIC_ONLY
 					class StaticOnlyCallback : public btClosestNotMeConvexResultCallback
 					{
@@ -906,7 +907,7 @@ void btDiscreteDynamicsWorld::integrateTransformsInternal(btRigidBody** bodies, 
 				BT_PROFILE("CCD motion clamping");
 				if (body->getCollisionShape()->isConvex())
 				{
-					gNumClampedCcdMotions++;
+					/* RocketSim: shared debug counter, contended across threads */ // gNumClampedCcdMotions++;
 #ifdef USE_STATIC_ONLY
 					class StaticOnlyCallback : public btClosestNotMeConvexResultCallback
 					{
