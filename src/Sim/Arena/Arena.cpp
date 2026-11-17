@@ -998,18 +998,13 @@ void Arena::Step(int ticksToSimulate) {
 			car->_tickStartState = car->GetState();
 		ball->_tickStartState = ball->GetState();
 
-		{ // Ball zero-vel sleeping
-			if (ball->_rigidBody.m_linearVelocity.length2() == 0 && ball->_rigidBody.m_angularVelocity.length2() == 0) {
-				ball->_rigidBody.setActivationState(ISLAND_SLEEPING);
-			} else {
-				ball->_rigidBody.setActivationState(ACTIVE_TAG);
-			}
-		}
 
 		bool ballOnly = _cars.empty();
 
 		bool hasArenaStuff = (gameMode != GameMode::THE_VOID);
 		
+		bool ballWasResting = ball->_rigidBody.m_linearVelocity.length2() == 0 && ball->_rigidBody.m_angularVelocity.length2() == 0;
+
 		// Flip damping goes first so that other cars' wheels see the damped velocity
 		for (Car* car : _cars)
 			car->_ApplyFlipZDamp();
@@ -1025,8 +1020,24 @@ void Arena::Step(int ticksToSimulate) {
 		// Update ball
 		ball->_PreTickUpdate(gameMode, tickTime);
 
+		// Ball zero-vel sleeping. A ball that was at rest at the start of the tick gets no gravity on this tick,
+		// but a wheel pushing on it during the cars' updates wakes it, and it moves with that velocity.
+		bool ballWokeThisTick = false;
+		if (ball->_rigidBody.m_linearVelocity.length2() == 0 && ball->_rigidBody.m_angularVelocity.length2() == 0) {
+			ball->_rigidBody.setActivationState(ISLAND_SLEEPING);
+		} else {
+			ballWokeThisTick = ballWasResting;
+			ball->_rigidBody.setActivationState(ACTIVE_TAG);
+		}
+		btVector3 ballGravity = ball->_rigidBody.getGravity();
+		if (ballWokeThisTick)
+			ball->_rigidBody.setGravity(btVector3(0, 0, 0));
+
 		// Update world
 		_bulletWorld.stepSimulation(tickTime, 0, tickTime);
+
+		if (ballWokeThisTick)
+			ball->_rigidBody.setGravity(ballGravity);
 
 		for (Car* car : _cars) {
 			car->_PostTickUpdate(gameMode, tickTime, _mutatorConfig);

@@ -275,6 +275,67 @@ void btCollisionWorld::rayTestSingleInternal(const btTransform& rayFromTrans, co
 	const btCollisionShape* collisionShape = collisionObjectWrap->getCollisionShape();
 	const btTransform& colObjWorldTransform = collisionObjectWrap->getWorldTransform();
 
+	// RocketSim: rays against a sphere (the ball) use the game's point cast: conservative advancement
+	// on the exact distance to the sphere (as in RocketSim v3), instead of the approximate GJK cast
+	if (collisionShape->getShapeType() == SPHERE_SHAPE_PROXYTYPE)
+	{
+		const btScalar radius = ((const btSphereShape*)collisionShape)->getRadius();
+		const btVector3 center = colObjWorldTransform.getOrigin();
+		const btVector3 from = rayFromTrans.getOrigin(), to = rayToTrans.getOrigin(), delta = to - from;
+
+		auto closest = [&](const btVector3& point, btScalar& dist, btVector3& normal) {
+			btVector3 rel = point - center;
+			btScalar lenSq = rel.length2();
+			if (!(lenSq > SIMD_EPSILON * SIMD_EPSILON))
+				return false;
+			btScalar rlen = 1 / btSqrt(lenSq);
+			dist = 1 / rlen - radius;
+			normal = rel * rlen;
+			return true;
+		};
+
+		btScalar dist;
+		btVector3 normal;
+		if (!closest(from, dist, normal))
+			return;
+		btScalar lambda = 0, lastLambda = 0, fraction = -1;
+		int iteration = 0;
+		while (dist > btScalar(0.001))
+		{
+			if (++iteration > 64)
+				return;
+			lambda -= dist / delta.dot(normal);
+			if (lambda > 1 || lambda < 0 || lambda <= lastLambda)
+				return;
+			lastLambda = lambda;
+			btVector3 point = from * (1 - lambda) + to * lambda;
+			btScalar nextDist;
+			btVector3 nextNormal;
+			if (!closest(point, nextDist, nextNormal))
+				return;
+			if (nextDist < 0)
+			{
+				fraction = lastLambda;
+				normal = nextNormal;
+				break;
+			}
+			dist = nextDist;
+			normal = nextNormal;
+		}
+		if (fraction < 0)
+		{
+			if (normal.dot(delta) >= 0)
+				return;
+			fraction = lambda;
+		}
+		if (fraction < resultCallback.m_closestHitFraction)
+		{
+			btCollisionWorld::LocalRayResult localRayResult(collisionObjectWrap->getCollisionObject(), 0, normal, fraction);
+			resultCallback.addSingleResult(localRayResult, true);
+		}
+		return;
+	}
+
 	if (collisionShape->isConvex())
 	{
 		// RocketSim: only the convex case casts a point shape, so only build it here
