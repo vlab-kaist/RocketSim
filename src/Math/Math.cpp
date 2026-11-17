@@ -1,39 +1,43 @@
+#include <algorithm>
 #include "Math.h"
 
 #include <thread>
 
 RS_NS_START
 
+LinearPieceCurve::LinearPieceCurve(std::initializer_list<std::pair<float, float>> points) : valueMappings(points) {
+	// Sorted, keeping the first point of equal inputs (as std::map's initialization did)
+	std::stable_sort(valueMappings.begin(), valueMappings.end(),
+		[](const std::pair<float, float>& a, const std::pair<float, float>& b) { return a.first < b.first; });
+	valueMappings.erase(std::unique(valueMappings.begin(), valueMappings.end(),
+		[](const std::pair<float, float>& a, const std::pair<float, float>& b) { return a.first == b.first; }), valueMappings.end());
+}
+
 float LinearPieceCurve::GetOutput(float input, float defaultOutput) const {
-	float output = input;
-
-	if (!valueMappings.empty()) {
-
-		// Make sure it isnt before/at the first value mapping
-		auto& firstValPair = *valueMappings.begin();
-		if (input <= firstValPair.first)
-			return firstValPair.second;
-
-		for (auto itr = std::next(valueMappings.begin()); itr != valueMappings.end(); itr++) {
-			if (itr->first > input) {
-				// Found the point bigger than it! Get surrounding
-				auto& afterPair = *itr;
-				auto& beforePair = *std::prev(itr);
-
-				float rangeBetween = afterPair.first - beforePair.first;
-				float valDiffBetween = afterPair.second - beforePair.second;
-				float linearInterpFactor = (input - beforePair.first) / rangeBetween;
-				return beforePair.second + valDiffBetween * linearInterpFactor;
-			}
-		}
-
-		// Must be beyond the largest input mapping, return that
-		return std::prev(valueMappings.end())->second;
-	} else {
+	size_t count = valueMappings.size();
+	if (count == 0)
 		return defaultOutput;
+
+	// Make sure it isnt before/at the first value mapping
+	const auto* points = valueMappings.data();
+	if (input <= points[0].first)
+		return points[0].second;
+
+	for (size_t i = 1; i < count; i++) {
+		if (points[i].first > input) {
+			// Found the point bigger than it! Get surrounding
+			const auto& afterPair = points[i];
+			const auto& beforePair = points[i - 1];
+
+			float rangeBetween = afterPair.first - beforePair.first;
+			float valDiffBetween = afterPair.second - beforePair.second;
+			float linearInterpFactor = (input - beforePair.first) / rangeBetween;
+			return beforePair.second + valDiffBetween * linearInterpFactor;
+		}
 	}
 
-	return output;
+	// Must be beyond the largest input mapping, return that
+	return points[count - 1].second;
 }
 
 btVector3 Math::RoundVec(btVector3 vec, float precision) {

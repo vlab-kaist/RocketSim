@@ -4,7 +4,11 @@
 RS_NS_START
 
 struct LinearPieceCurve {
-	std::map<float, float> valueMappings;
+	// (input, output) points, sorted by input, inputs unique (as std::map kept them, but contiguous)
+	std::vector<std::pair<float, float>> valueMappings;
+
+	LinearPieceCurve() {}
+	LinearPieceCurve(std::initializer_list<std::pair<float, float>> points);
 
 	float GetOutput(float input, float defaultOutput = 1) const;
 };
