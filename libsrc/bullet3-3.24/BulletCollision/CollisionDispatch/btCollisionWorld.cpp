@@ -1,3 +1,5 @@
+#include <cmath>
+#include <cfloat>
 /*
 Bullet Continuous Collision Detection and Physics Library
 Copyright (c) 2003-2006 Erwin Coumans  https://bulletphysics.org
@@ -268,6 +270,201 @@ void btCollisionWorld::rayTestSingle(const btTransform& rayFromTrans, const btTr
 	btCollisionWorld::rayTestSingleInternal(rayFromTrans, rayToTrans, &colObWrap, resultCallback);
 }
 
+
+// RocketSim: exact ray against a box with rounded edges (box shape with margin), in the box's frame.
+// Ported from RocketSim v3 (compound_shape.rs), which matches the game.
+static bool RS_SolveRoundedBox(const btVector3& sourceL, const btVector3& dirL, btScalar dist, const btVector3& innerHalf, btScalar margin, btScalar& tOut, btVector3& normalOut)
+{
+	btScalar points[8];
+	points[0] = 0;
+	points[1] = dist;
+	int count = 2;
+	for (int axis = 0; axis < 3; axis++)
+	{
+		btScalar d = dirL[axis];
+		if (d == 0)
+			continue;
+		btScalar s = sourceL[axis], h = innerHalf[axis];
+		for (int k = 0; k < 2; k++)
+		{
+			btScalar bound = k ? h : -h;
+			btScalar t = (bound - s) / d;
+			if (t > 0 && t < dist && count < 8)
+				points[count++] = t;
+		}
+	}
+	for (int i = 1; i < count; i++)
+	{
+		btScalar key = points[i];
+		int j = i;
+		while (j > 0 && points[j - 1] > key)
+		{
+			points[j] = points[j - 1];
+			j--;
+		}
+		points[j] = key;
+	}
+
+	btScalar marginSq = margin * margin;
+	for (int i = 0; i < count - 1; i++)
+	{
+		btScalar t0 = points[i], t1 = points[i + 1];
+		if (t1 <= t0)
+			continue;
+		btScalar mid = t0 + (t1 - t0) * btScalar(0.5);
+		btVector3 pMid = sourceL + dirL * mid;
+
+		btScalar a = 0, b = 0, c = 0;
+		int outside = 0;
+		for (int axis = 0; axis < 3; axis++)
+		{
+			btScalar pm = pMid[axis], h = innerHalf[axis], bound;
+			if (pm < -h)
+				bound = -h;
+			else if (pm > h)
+				bound = h;
+			else
+				continue;
+			outside++;
+			btScalar o = sourceL[axis] - bound, d = dirL[axis];
+			a += d * d;
+			b += btScalar(2) * d * o;
+			c += o * o;
+		}
+		if (outside == 0)
+			continue;
+
+		btScalar cc = c - marginSq;
+		btScalar disc = b * b - btScalar(4) * a * cc;
+		if (disc < 0)
+		{
+			btScalar scale = b * b + btFabs(btScalar(4) * a * cc);
+			if (disc > -FLT_EPSILON * scale)
+				disc = 0;
+			else
+				continue;
+		}
+		btScalar sqrtD = btSqrt(disc);
+		btScalar tHit;
+		if (disc == 0)
+		{
+			tHit = -b / (btScalar(2) * a);
+		}
+		else
+		{
+			btScalar q = btScalar(-0.5) * (b >= 0 ? b + sqrtD : b - sqrtD);
+			if (q == 0)
+			{
+				tHit = -b / (btScalar(2) * a);
+			}
+			else
+			{
+				btScalar r0 = q / a, r1 = cc / q;
+				tHit = r0 <= r1 ? r0 : r1;
+			}
+		}
+		if (tHit <= 0 || tHit > dist || tHit < t0 || tHit > t1)
+			continue;
+
+		btVector3 hit = sourceL + dirL * tHit;
+		btVector3 clamped = hit;
+		for (int axis = 0; axis < 3; axis++)
+			clamped[axis] = btMax(-innerHalf[axis], btMin(innerHalf[axis], hit[axis]));
+		btVector3 n = hit - clamped;
+		btScalar lenSq = n.length2();
+		if (lenSq <= FLT_EPSILON * FLT_EPSILON)
+			continue;
+		btVector3 nNorm = n / btSqrt(lenSq);
+		if (nNorm.dot(dirL) > 0)
+			continue;
+		tOut = tHit;
+		normalOut = nNorm;
+		return true;
+	}
+	return false;
+}
+
+// Ray against a compound holding one axis-aligned box child (a car hitbox), in the compound's frame.
+// Returns false if there is no hit.
+static bool RS_RayCompoundBox(const btVector3& from, const btVector3& to, const btBoxShape* box, const btVector3& childOrigin, btScalar& fractionOut, btVector3& normalOut)
+{
+	btVector3 delta = to - from;
+	btScalar dist = delta.length();
+	btVector3 dir = delta / dist;
+
+	btScalar margin = box->getMargin();
+	btVector3 innerHalf = box->getHalfExtentsWithoutMargin();
+	btVector3 outerHalf = innerHalf + btVector3(margin, margin, margin);
+	btVector3 aabbMin = childOrigin - outerHalf, aabbMax = childOrigin + outerHalf;
+
+	btScalar tenter = 0, texit = dist;
+	int hitAxis = 0;
+	for (int axis = 0; axis < 3; axis++)
+	{
+		btScalar inv = btScalar(1) / dir[axis];
+		if (!std::isfinite(inv))
+		{
+			btScalar origin = from[axis];
+			if (aabbMin[axis] > origin || origin > aabbMax[axis])
+				return false;
+			continue;
+		}
+		btScalar t1 = (aabbMin[axis] - from[axis]) * inv, t2 = (aabbMax[axis] - from[axis]) * inv;
+		btScalar tmin = btMin(t1, t2), tmax = btMax(t1, t2);
+		if (std::signbit(tmax))
+			return false;
+		texit = btMin(texit, tmax);
+		if (tmin > tenter)
+		{
+			tenter = tmin;
+			hitAxis = axis;
+		}
+		if (tenter > texit)
+			return false;
+	}
+	if (0 >= tenter || tenter > dist)
+		return false;
+
+	// Entry through a face
+	btVector3 entry = from + dir * tenter;
+	btVector3 local = entry - childOrigin;
+	bool insideFace = true;
+	for (int axis = 0; axis < 3; axis++)
+	{
+		if (axis == hitAxis)
+			continue;
+		if (btFabs(local[axis]) > innerHalf[axis])
+		{
+			insideFace = false;
+			break;
+		}
+	}
+	if (insideFace)
+	{
+		btVector3 n(0, 0, 0);
+		n[hitAxis] = dir[hitAxis] > 0 ? btScalar(-1) : (dir[hitAxis] < 0 ? btScalar(1) : btScalar(0));
+		if (n.length2() <= 0)
+			return false;
+		fractionOut = btMax(tenter, btScalar(0)) / dist;
+		normalOut = n;
+		return true;
+	}
+
+	// Entry through an edge or corner
+	btScalar tHit;
+	btVector3 nC;
+	if (!RS_SolveRoundedBox(from - childOrigin, dir, dist, innerHalf, margin, tHit, nC))
+		return false;
+	nC /= nC.length();
+	if (nC.dot(dir) > 0)
+		return false;
+	if (0 >= tHit || tHit > dist)
+		return false;
+	fractionOut = tHit / dist;
+	normalOut = nC;
+	return true;
+}
+
 void btCollisionWorld::rayTestSingleInternal(const btTransform& rayFromTrans, const btTransform& rayToTrans,
 											 const btCollisionObjectWrapper* collisionObjectWrap,
 											 RayResultCallback& resultCallback)
@@ -334,6 +531,30 @@ void btCollisionWorld::rayTestSingleInternal(const btTransform& rayFromTrans, co
 			resultCallback.addSingleResult(localRayResult, true);
 		}
 		return;
+	}
+
+	// RocketSim: a car hitbox (compound with one unrotated box) is hit exactly, like the game
+	if (collisionShape->isCompound())
+	{
+		const btCompoundShape* compound = (const btCompoundShape*)collisionShape;
+		if (compound->getNumChildShapes() == 1 && compound->getChildShape(0)->getShapeType() == BOX_SHAPE_PROXYTYPE)
+		{
+			const btTransform& childTrans = compound->getChildTransform(0);
+			btTransform worldToLocal = colObjWorldTransform.inverse();
+			btVector3 fromL = worldToLocal * rayFromTrans.getOrigin(), toL = worldToLocal * rayToTrans.getOrigin();
+			btScalar fraction;
+			btVector3 normalL;
+			if (RS_RayCompoundBox(fromL, toL, (const btBoxShape*)compound->getChildShape(0), childTrans.getOrigin(), fraction, normalL))
+			{
+				if (fraction < resultCallback.m_closestHitFraction)
+				{
+					btVector3 normalW = colObjWorldTransform.getBasis() * normalL;
+					btCollisionWorld::LocalRayResult localRayResult(collisionObjectWrap->getCollisionObject(), 0, normalW, fraction);
+					resultCallback.addSingleResult(localRayResult, true);
+				}
+			}
+			return;
+		}
 	}
 
 	if (collisionShape->isConvex())

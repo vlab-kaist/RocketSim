@@ -318,8 +318,10 @@ void btVehicleRL::updateSuspension(float deltaTime) {
 		}
 	}
 
-	for (int i = 0; i < getNumWheels(); i++) {
-		btWheelInfoRL& wheel = m_wheelInfo[i];
+	// Impulses are applied in the game's wheel order (front right, front left, back right, back left)
+	static const int COMBINE_ORDER[4] = { 1, 0, 3, 2 };
+	for (int k = 0; k < getNumWheels(); k++) {
+		btWheelInfoRL& wheel = m_wheelInfo[getNumWheels() == 4 ? COMBINE_ORDER[k] : k];
 		if (wheel.m_wheelsSuspensionForce != 0) {
 			btVector3 contactPointOffset = wheel.m_raycastInfo.m_contactPointWS - getRigidBody()->getCenterOfMassPosition();
 			float baseForceScale = (wheel.m_wheelsSuspensionForce * deltaTime) + wheel.m_extraPushback;
@@ -400,8 +402,9 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
 void btVehicleRL::applyFrictionImpulses(float timeStep) {
 	// Apply impulses
 	btVector3 upDir = m_chassisBody->getWorldTransform().getBasis().getColumn(m_indexUpAxis);
-	for (int i = 0; i < m_wheelInfo.size(); i++) {
-		btWheelInfoRL& wheel = m_wheelInfo[i];
+	static const int COMBINE_ORDER[4] = { 1, 0, 3, 2 };
+	for (int k = 0; k < m_wheelInfo.size(); k++) {
+		btWheelInfoRL& wheel = m_wheelInfo[m_wheelInfo.size() == 4 ? COMBINE_ORDER[k] : k];
 		if (!wheel.m_impulse.isZero()) {
 			btVector3 wheelContactOffset = wheel.m_raycastInfo.m_contactPointWS - m_chassisBody->getWorldTransform().getOrigin();
 			float contactUpDot = upDir.dot(wheelContactOffset);
