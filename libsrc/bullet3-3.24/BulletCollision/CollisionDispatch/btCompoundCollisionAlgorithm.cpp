@@ -30,6 +30,8 @@ btCompoundCollisionAlgorithm::btCompoundCollisionAlgorithm(const btCollisionAlgo
 	  m_sharedManifold(ci.m_manifold)
 {
 	m_ownsManifold = false;
+	manifoldArray.initializeFromBuffer(m_manifoldArrayBuffer, 0, 4);
+	m_childCollisionAlgorithms.initializeFromBuffer(m_childAlgorithmsBuffer, 0, 4);
 
 	const btCollisionObjectWrapper* colObjWrap = m_isSwapped ? body1Wrap : body0Wrap;
 	btAssert(colObjWrap->getCollisionShape()->isCompound());

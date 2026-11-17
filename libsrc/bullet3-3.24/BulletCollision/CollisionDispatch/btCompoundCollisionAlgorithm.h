@@ -42,6 +42,10 @@ class btCompoundCollisionAlgorithm : public btActivatingCollisionAlgorithm
 
 protected:
 	btAlignedObjectArray<btCollisionAlgorithm*> m_childCollisionAlgorithms;
+
+	// RocketSim: inline storage for the two arrays above (pairs, and so these algorithms, are made every tick)
+	btPersistentManifold* m_manifoldArrayBuffer[4];
+	btCollisionAlgorithm* m_childAlgorithmsBuffer[4];
 	bool m_isSwapped;
 
 	class btPersistentManifold* m_sharedManifold;
