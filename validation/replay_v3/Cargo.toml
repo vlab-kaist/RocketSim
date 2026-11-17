@@ -1,0 +1,19 @@
+[package]
+name = "replay_v3"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+# Pinned by the checkout of ZealanL/RocketSim v3-rust next to the fork (../../../rocketsim-v3, tag v0.3.6).
+rocketsim = { path = "../../../rocketsim-v3/rocketsim", features = ["native-math"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+box-triangle-gjk = ["rocketsim/box-triangle-gjk"]
+
+[profile.release]
+debug = false
+
+[workspace]

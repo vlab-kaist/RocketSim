@@ -1,0 +1,41 @@
+#:schema https://rlbot.org/schemas/match.json
+# Match used for recording validation scenarios in the real game.
+# Two bot cars with no bot process: the recorder script drives both, which the
+# server allows because state setting is enabled.
+[rlbot]
+launcher = "Custom"
+launcher_arg = "heroic"
+auto_start_agents = false
+wait_for_agents = false
+
+[match]
+game_mode = "Soccar"
+game_map_upk = "Stadium_P"
+skip_replays = true
+start_without_countdown = true
+existing_match_behavior = "Restart"
+enable_rendering = "OffByDefault"
+enable_state_setting = true
+auto_save_replay = false
+freeplay = false
+
+[[cars]]
+team = 0
+type = "RLBot"
+config_file = "puppet.bot.toml"
+auto_start = false
+
+[[cars]]
+team = 1
+type = "RLBot"
+config_file = "puppet.bot.toml"
+auto_start = false
+
+[[scripts]]
+config_file = "recorder.script.toml"
+auto_start = false
+
+[mutators]
+match_length = "Unlimited"
+# A goal must not send the cars back to a kickoff in the middle of a scenario
+respawn_time = "DisableGoalReset"

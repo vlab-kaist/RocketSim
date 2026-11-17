@@ -1,0 +1,13 @@
+[project]
+name = "rlval"
+version = "0.1.0"
+description = "Rocket League sim-vs-game validation harness (RLBot v5 recordings replayed in RocketSim backends)"
+requires-python = ">=3.12"
+dependencies = ["numpy>=2.0", "rlbot>=2.0.0b56"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["rlval"]

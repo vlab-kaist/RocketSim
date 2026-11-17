@@ -1,0 +1,5 @@
+#:schema https://rlbot.org/schemas/agent.json
+# A car with no bot process. The recorder script sends its inputs.
+[settings]
+agent_id = "vlab/rlval-puppet"
+name = "Puppet"

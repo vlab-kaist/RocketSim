@@ -1,0 +1,5 @@
+#:schema https://rlbot.org/schemas/agent.json
+# Started by hand from another account, see README.
+[settings]
+agent_id = "vlab/rlval-recorder"
+name = "rlval recorder"
