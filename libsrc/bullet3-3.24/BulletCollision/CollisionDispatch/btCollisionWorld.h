@@ -91,6 +91,9 @@ protected:
 	btDispatcherInfo m_dispatchInfo;
 
 	btBroadphaseInterface* m_broadphasePairCache;
+	// RocketSim: m_broadphasePairCache, if it is a btRSBroadphase
+	class btRSBroadphase* m_rsBroadphase = NULL;
+	static class btRSBroadphase* _asRSBroadphase(btBroadphaseInterface* broadphase);
 
 	///m_forceUpdateAllAabbs can be set to false as an optimization to only update active object AABBs
 	///it is true by default, because it is error-prone (setting the position of static objects wouldn't update their AABB)
@@ -108,6 +111,7 @@ public:
 	void setBroadphase(btBroadphaseInterface* pairCache)
 	{
 		m_broadphasePairCache = pairCache;
+		m_rsBroadphase = _asRSBroadphase(pairCache);
 	}
 
 	const btBroadphaseInterface* getBroadphase() const

@@ -64,7 +64,13 @@ void btCollisionWorld::setup(btCollisionDispatcher* dispatcher, btBroadphaseInte
 {
 	m_dispatcher1 = dispatcher;
 	m_broadphasePairCache = pairCache;
+	m_rsBroadphase = _asRSBroadphase(pairCache);
 	m_forceUpdateAllAabbs = true;
+}
+
+btRSBroadphase* btCollisionWorld::_asRSBroadphase(btBroadphaseInterface* broadphase)
+{
+	return dynamic_cast<btRSBroadphase*>(broadphase);
 }
 
 btCollisionWorld::~btCollisionWorld()
@@ -1322,7 +1328,7 @@ void btCollisionWorld::rayTestMulti(const btVector3* raysFromWorld, const btVect
 	btAssert(numRays <= MAX_RAYS);
 
 	// The rays must all be short enough for the broadphase to only look at the cell they start in
-	btRSBroadphase* broadphase = dynamic_cast<btRSBroadphase*>(m_broadphasePairCache);
+	btRSBroadphase* broadphase = m_rsBroadphase;
 	bool batched = broadphase != NULL && numRays <= MAX_RAYS;
 	for (int r = 0; r < numRays && batched; r++)
 		if (raysFromWorld[r].distance2(raysToWorld[r]) >= broadphase->cellSizeSq)
