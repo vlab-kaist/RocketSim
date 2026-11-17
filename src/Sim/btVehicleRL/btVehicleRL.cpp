@@ -262,8 +262,12 @@ void btVehicleRL::updateVehicleFirst(float step) {
 	}
 	RS_PROF(30, "    post");
 
-	for (int i = 0; i < numWheels; i++)
+	// In the game's wheel order, as the wheels' reactions on a body under them change its velocity for the next wheel
+	static const int COMBINE_ORDER[4] = { 1, 0, 3, 2 };
+	for (int k = 0; k < numWheels; k++) {
+		int i = numWheels == 4 ? COMBINE_ORDER[k] : k;
 		rayCast(m_wheelInfo[i], (btCollisionObject*)hitObjects[i], rayResults[i]);
+	}
 }
 
 // The friction impulses are determined here, after the car has set this tick's
