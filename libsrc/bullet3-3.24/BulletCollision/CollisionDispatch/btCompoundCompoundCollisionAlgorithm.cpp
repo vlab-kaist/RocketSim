@@ -112,11 +112,13 @@ struct btCompoundCompoundLeafCallback : btDbvt::ICollide
 
 	void Process(const btDbvtNode* leaf0, const btDbvtNode* leaf1)
 	{
+		ProcessChildPair(leaf0->dataAsInt, leaf1->dataAsInt);
+	}
+
+	void ProcessChildPair(int childIndex0, int childIndex1)
+	{
 		BT_PROFILE("btCompoundCompoundLeafCallback::Process");
 		m_numOverlapPairs++;
-
-		int childIndex0 = leaf0->dataAsInt;
-		int childIndex1 = leaf1->dataAsInt;
 
 		btAssert(childIndex0 >= 0);
 		btAssert(childIndex1 >= 0);
@@ -293,10 +295,10 @@ void btCompoundCompoundCollisionAlgorithm::processCollision(const btCollisionObj
 
 	const btDbvt* tree0 = compoundShape0->getDynamicAabbTree();
 	const btDbvt* tree1 = compoundShape1->getDynamicAabbTree();
-	if (!tree0 || !tree1)
-	{
-		return btCompoundCollisionAlgorithm::processCollision(body0Wrap, body1Wrap, dispatchInfo, resultOut);
-	}
+	// RocketSim: compounds without child trees (the cars) are handled like ones with trees, testing every
+	// pair of children instead of walking the trees. (Bullet passed them to btCompoundCollisionAlgorithm, which
+	// tests the children of the second compound against the first, and so gives child algorithms the bodies
+	// in the other order: the box-box detector then takes the second car's faces first on a tie.)
 	///btCompoundShape might have changed:
 	////make sure the internal child collision algorithm caches are still valid
 	if ((compoundShape0->getUpdateRevision() != m_compoundShapeRevision0) || (compoundShape1->getUpdateRevision() != m_compoundShapeRevision1))
@@ -340,8 +342,17 @@ void btCompoundCompoundCollisionAlgorithm::processCollision(const btCollisionObj
 
 	btCompoundCompoundLeafCallback callback(col0ObjWrap, col1ObjWrap, this->m_dispatcher, dispatchInfo, resultOut, this->m_childCollisionAlgorithmCache, m_sharedManifold);
 
-	const btTransform xform = col0ObjWrap->getWorldTransform().inverse() * col1ObjWrap->getWorldTransform();
-	MycollideTT(tree0->m_root, tree1->m_root, xform, &callback, resultOut->m_closestPointDistanceThreshold);
+	if (tree0 && tree1)
+	{
+		const btTransform xform = col0ObjWrap->getWorldTransform().inverse() * col1ObjWrap->getWorldTransform();
+		MycollideTT(tree0->m_root, tree1->m_root, xform, &callback, resultOut->m_closestPointDistanceThreshold);
+	}
+	else
+	{
+		for (int i = 0; i < compoundShape0->getNumChildShapes(); i++)
+			for (int j = 0; j < compoundShape1->getNumChildShapes(); j++)
+				callback.ProcessChildPair(i, j);
+	}
 
 	//printf("#compound-compound child/leaf overlap =%d                      \r",callback.m_numOverlapPairs);
 
