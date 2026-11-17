@@ -9,6 +9,10 @@ RS_NS_START
 
 // Update our internal state from bullet and return it
 CarState Car::GetState() {
+	return _UpdateState();
+}
+
+const CarState& Car::_UpdateState() {
 	if (!_internalState.isDemoed) {
 		_internalState.pos = _rigidBody.getWorldTransform().m_origin * BT_TO_UU;
 
@@ -688,9 +692,12 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, i
 	btVector3 forwardDir = basis.getColumn(0), rightDir = basis.getColumn(1), upDir = basis.getColumn(2);
 	bool allowDodge = numWheelsInContact < 3;
 	bool allowAir = numWheelsInContact == 0;
+	bool flipTorque = _internalState.isFlipping && allowDodge && !_internalState.flipRelTorque.IsZero();
+	if (!flipTorque && !allowAir)
+		return; // (Nothing to apply, so no need for the inertia below)
 	btMatrix3x3 inertia = _rigidBody.m_invInertiaTensorWorld.inverse();
 
-	if (_internalState.isFlipping && allowDodge && !_internalState.flipRelTorque.IsZero()) {
+	if (flipTorque) {
 		Vec relDodgeTorque = _internalState.flipRelTorque;
 
 		float pitchScale = 1;

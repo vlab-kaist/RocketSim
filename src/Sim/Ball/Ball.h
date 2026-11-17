@@ -72,6 +72,8 @@ public:
 
 	BallState _internalState;
 	BallState GetState();
+	// Brings the stored state's physics up to date with the rigid body (what GetState() returns)
+	const BallState& _UpdateState();
 	void SetState(const BallState& state);
 
 	btRigidBody _rigidBody;

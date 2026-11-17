@@ -154,6 +154,8 @@ public:
 	CarControls controls;
 
 	CarState GetState();
+	// Brings the stored state's physics up to date with the rigid body (what GetState() returns)
+	const CarState& _UpdateState();
 	void SetState(const CarState& state);
 
 	void Demolish(float respawnDelay = RLConst::DEMO_RESPAWN_TIME);

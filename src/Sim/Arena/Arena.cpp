@@ -1239,8 +1239,8 @@ void Arena::Step(int ticksToSimulate) {
 
 		{ RS_PROF(8, "  tick start states");
 		for (Car* car : _cars)
-			car->_tickStartState = car->GetState();
-		ball->_tickStartState = ball->GetState();
+			car->_tickStartState = car->_UpdateState();
+		ball->_tickStartState = ball->_UpdateState();
 		}
 		}
 
