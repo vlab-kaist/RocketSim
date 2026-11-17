@@ -6,7 +6,7 @@ A job is plain JSON so that backends in any language can run it:
      "cars": [{"team": 0, "body": "octane", "pos": [...], "rot": [fwd3, right3, up3],
                "vel": [...], "ang_vel": [...], "boost": 100.0, "on_ground": true,
                "has_jumped": false, "has_double_jumped": false, "has_flipped": false,
-               "demoed": false, "supersonic": false}],
+               "demoed": false, "supersonic": false, "handbrake": 0.0}],
      "ball": {"pos": [...], "rot": [...], "vel": [...], "ang_vel": [...]},
      "steps": [{"ticks": 1, "controls": [[8 floats] per car]}]}
 
@@ -85,6 +85,23 @@ def find_start(rec: Recording) -> int:
     return start
 
 
+def _handbrake_at(rec: Recording, src: np.ndarray, delay: int, end: int, car: int) -> float:
+    """Smoothed handbrake value the game has at packet `end`, from the inputs that drove the ticks before it.
+
+    State setting doesn't touch it, and a scenario's first inputs can already
+    act on the ticks before the start packet.
+    """
+    rise, fall = 5.0 / TICK_RATE, 2.0 / TICK_RATE
+    val = 0.0
+    for i in range(end):
+        ticks = int(rec.frame_num[i + 1] - rec.frame_num[i])
+        j = min(max(i + delay, 0), len(src) - 1)
+        pressed = bool(np.nan_to_num(src[j, car, 7], nan=0.0) > 0.5)
+        for _ in range(max(ticks, 0)):
+            val = min(val + rise, 1.0) if pressed else max(val - fall, 0.0)
+    return val
+
+
 def _rot_rows(pyr: np.ndarray) -> list[list[float]]:
     m = euler_to_rotmat(pyr)
     return [m[:, 0].tolist(), m[:, 1].tolist(), m[:, 2].tolist()]
@@ -122,6 +139,7 @@ def build_job(rec: Recording, delay: int = 0, start: int | None = None, max_step
                 "has_flipped": bool(rec.car_has_dodged[start, c]),
                 "demoed": bool(rec.car_demolished_timeout[start, c] >= 0),
                 "supersonic": bool(rec.car_supersonic[start, c]),
+                "handbrake": _handbrake_at(rec, src, delay, start, c),
             }
         )
     ball = {

@@ -27,6 +27,8 @@ struct CarSpec {
     has_flipped: bool,
     demoed: bool,
     supersonic: bool,
+    #[serde(default)]
+    handbrake: f32,
 }
 
 #[derive(Deserialize)]
@@ -120,6 +122,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         arena.set_car_state(idx, core);
         arena.edit_car_state_full(idx, |state| {
             state.is_supersonic = spec.supersonic;
+            state.handbrake_val = spec.handbrake;
             state.set_contact_flags(spec.on_ground, [spec.on_ground; 4]);
         });
         if spec.demoed {

@@ -66,6 +66,7 @@ def replay(spec: dict, name: str = "cpp") -> dict:
         st.has_double_jumped = c["has_double_jumped"]
         st.has_flipped = c["has_flipped"]
         st.is_supersonic = c["supersonic"]
+        st.handbrake_val = c.get("handbrake", 0.0)
         car.set_state(st)
         if c["demoed"]:
             car.demolish()
