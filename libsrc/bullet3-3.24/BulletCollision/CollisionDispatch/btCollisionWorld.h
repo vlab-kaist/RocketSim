@@ -415,6 +415,7 @@ public:
 
 	/// RocketSim: rayTest() for several short rays (the wheel rays of a car), at most 32. Each ray gets the result
 	/// rayTest() would give it, but the broadphase cell and each triangle mesh tree are walked once for all of them.
+	/// The callbacks must filter objects the same way (needsCollision() is only asked of the first).
 	void rayTestMulti(const btVector3* raysFromWorld, const btVector3* raysToWorld, RayResultCallback** resultCallbacks, int numRays) const;
 
 	/// convexTest performs a swept convex cast on all objects in the btCollisionWorld, and calls the resultCallback

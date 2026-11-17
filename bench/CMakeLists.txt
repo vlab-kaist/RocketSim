@@ -4,6 +4,8 @@ cmake_minimum_required(VERSION 3.26)
 project(RocketSimBench CXX)
 
 set(ROOT ${CMAKE_CURRENT_SOURCE_DIR}/..)
+# Same as the library build: results don't depend on -march
+add_compile_options(-ffp-contract=off)
 file(GLOB_RECURSE BULLET_SOURCES ${ROOT}/libsrc/bullet3-3.24/*.cpp)
 file(GLOB_RECURSE SIM_SOURCES ${ROOT}/src/*.cpp)
 

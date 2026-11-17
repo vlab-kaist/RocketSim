@@ -61,3 +61,4 @@ build-bench/
 build-prof/
 cmeel/__pycache__/
 build-profile/
+build-perf/

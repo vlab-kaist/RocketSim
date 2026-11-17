@@ -1380,6 +1380,7 @@ void btCollisionWorld::rayTestMulti(const btVector3* raysFromWorld, const btVect
 		rayMax[r].setMax(raysToWorld[r]);
 	}
 
+	RS_PROF(31, "      cell loop");
 	// Visit the cell's objects in the order btRSBroadphase::rayTest() does, testing each ray against
 	// them as btSingleRayCallback::process() would
 	btRSBroadphase::Cell& cell = broadphase->cells[cellIdx];
@@ -1395,6 +1396,10 @@ void btCollisionWorld::rayTestMulti(const btVector3* raysFromWorld, const btVect
 			const btCollisionShape* shape = collisionObject->getCollisionShape();
 			const btTransform& worldTransform = collisionObject->getWorldTransform();
 
+			// The callbacks share their filter, so it is only checked once
+			if (!resultCallbacks[0]->needsCollision(collisionObject->getBroadphaseHandle()))
+				continue;
+
 			bool haveAabb = false;
 			btVector3 objMin, objMax;
 			int activeRays[MAX_RAYS];
@@ -1403,8 +1408,6 @@ void btCollisionWorld::rayTestMulti(const btVector3* raysFromWorld, const btVect
 			{
 				RayResultCallback* callback = resultCallbacks[r];
 				if (callback->m_closestHitFraction == btScalar(0.f))
-					continue;
-				if (!callback->needsCollision(collisionObject->getBroadphaseHandle()))
 					continue;
 				if (!collisionObject->isStaticObject())
 				{
@@ -1422,7 +1425,30 @@ void btCollisionWorld::rayTestMulti(const btVector3* raysFromWorld, const btVect
 			if (numActive == 0)
 				continue;
 
-			if (numActive > 1 && shape->getShapeType() == TRIANGLE_MESH_SHAPE_PROXYTYPE)
+			if (shape->getShapeType() == STATIC_PLANE_PROXYTYPE && worldTransform.getOrigin().isZero() && worldTransform.getBasis() == btMatrix3x3::getIdentity())
+			{
+				// The plane test of rayTestSingleInternal(), without the (identity) transform
+				const btStaticPlaneShape* plane = (const btStaticPlaneShape*)shape;
+				const btVector3& planeNormal = plane->getPlaneNormal();
+				for (int i = 0; i < numActive; i++)
+				{
+					int r = activeRays[i];
+					btScalar distFrom = planeNormal.dot(raysFromWorld[r]) - plane->getPlaneConstant();
+					btScalar distTo = planeNormal.dot(raysToWorld[r]) - plane->getPlaneConstant();
+					if (distFrom * distTo >= btScalar(0))
+						continue;
+					btScalar hitFraction = distFrom / (distFrom - distTo);
+					if (hitFraction < resultCallbacks[r]->m_closestHitFraction)
+					{
+						btCollisionWorld::LocalShapeInfo shapeInfo;
+						shapeInfo.m_shapePart = 0;
+						shapeInfo.m_triangleIndex = 0;
+						btCollisionWorld::LocalRayResult rayResult(collisionObject, &shapeInfo, distFrom > 0 ? planeNormal : -planeNormal, hitFraction);
+						resultCallbacks[r]->addSingleResult(rayResult, true);
+					}
+				}
+			}
+			else if (numActive > 1 && shape->getShapeType() == TRIANGLE_MESH_SHAPE_PROXYTYPE)
 			{
 				btBvhTriangleMeshShape* triangleMesh = (btBvhTriangleMeshShape*)shape;
 				btTransform worldTocollisionObject = worldTransform.inverse();

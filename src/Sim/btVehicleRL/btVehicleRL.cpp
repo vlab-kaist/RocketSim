@@ -1,4 +1,5 @@
 #include "btVehicleRL.h"
+#include "../../RSProf.h"
 #include "../../RLConst.h"
 #include "../../BulletLink.h"
 #define ROLLING_INFLUENCE_FIX
@@ -250,11 +251,16 @@ void btVehicleRL::updateVehicleFirst(float step) {
 	btVector3 sources[MAX_WHEELS], targets[MAX_WHEELS];
 	btVehicleRaycaster::btVehicleRaycasterResult rayResults[MAX_WHEELS];
 	void* hitObjects[MAX_WHEELS];
+	{ RS_PROF(28, "    getRay");
 	for (int i = 0; i < numWheels; i++)
 		getRay(m_wheelInfo[i], sources[i], targets[i]);
+	}
 
 	btAssert(m_vehicleRaycaster);
+	{ RS_PROF(29, "    castRays");
 	m_vehicleRaycaster->castRays(sources, targets, numWheels, m_chassisBody, rayResults, hitObjects);
+	}
+	RS_PROF(30, "    post");
 
 	for (int i = 0; i < numWheels; i++)
 		rayCast(m_wheelInfo[i], (btCollisionObject*)hitObjects[i], rayResults[i]);

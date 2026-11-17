@@ -51,6 +51,11 @@ endif()
 
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)
 
+# No fused multiply-adds unless written out, so that every build (any -march) gives the same results
+if(NOT MSVC)
+	target_compile_options(${PROJECT_NAME} PRIVATE -ffp-contract=off)
+endif()
+
 set_target_properties(${PROJECT_NAME} PROPERTIES C_VISIBILITY_PRESET hidden)
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_VISIBILITY_PRESET hidden)
 
