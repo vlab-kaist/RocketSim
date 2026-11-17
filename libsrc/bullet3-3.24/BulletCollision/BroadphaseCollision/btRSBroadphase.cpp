@@ -29,6 +29,8 @@ subject to the following restrictions:
 #include <stdexcept>
 #include <iostream>
 #include <mutex>
+#include <map>
+#include <cstring>
 
 #define THROW_ERR(msg) { std::string fullMsg = std::string() + "btRSBroadphase fatal error: " msg; std::cout << msg << std::endl; throw std::runtime_error(fullMsg); }
 
@@ -50,7 +52,10 @@ btRSBroadphase::btRSBroadphase(btVector3 min, btVector3 max, float cellSize, btO
 
 	// allocate handles buffer and put all handles on free list
 	m_pHandlesRawPtr = btAlignedAlloc(sizeof(btRSBroadphaseProxy) * maxProxies, 16);
-	m_pHandles = new (m_pHandlesRawPtr) btRSBroadphaseProxy[maxProxies];
+	// (Constructed one by one: an array placement new of a type with a destructor can write a size before the elements)
+	m_pHandles = (btRSBroadphaseProxy*)m_pHandlesRawPtr;
+	for (int i = 0; i < maxProxies; i++)
+		new (&m_pHandles[i]) btRSBroadphaseProxy();
 	m_maxHandles = maxProxies;
 	m_numHandles = 0;
 	m_firstFreeHandle = 0;
@@ -84,6 +89,8 @@ btRSBroadphase::btRSBroadphase(btVector3 min, btVector3 max, float cellSize, btO
 }
 
 btRSBroadphase::~btRSBroadphase() {
+	for (int i = 0; i < m_maxHandles; i++)
+		m_pHandles[i].~btRSBroadphaseProxy();
 	btAlignedFree(m_pHandlesRawPtr);
 
 	if (m_ownsPairCache) {
@@ -92,8 +99,9 @@ btRSBroadphase::~btRSBroadphase() {
 	}
 }
 
-template <bool ADD>
-void _UpdateCellsStatic(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
+// The cells a static proxy goes in: every cell next to a cell its bounds touch (for a triangle mesh,
+// only cells next to a cell that holds some of its triangles)
+static std::vector<int> _CalcStaticCells(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
 
 	// Fix dumb massive value aabb bug
 	btVector3 aabbMax = proxy->m_aabbMax;
@@ -122,26 +130,10 @@ void _UpdateCellsStatic(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
 	};
 	BoolHitTriangleCallback callbackInst = {};
 
-	int numSkipped = 0;
+	std::vector<char> inCell(_this->totalCells, 0);
 	for (int i = iMin; i <= iMax; i++) {
 		for (int j = jMin; j <= jMax; j++) {
 			for (int k = kMin; k <= kMax; k++) {
-				std::vector<btRSBroadphase::Cell*> cells = {};
-				for (int i1 = -1; i1 <= 1; i1++) {
-					for (int j1 = -1; j1 <= 1; j1++) {
-						for (int k1 = -1; k1 <= 1; k1++) {
-							int ci = i + i1;
-							int cj = j + j1;
-							int ck = k + k1;
-							if (ci < 0 || cj < 0 || ck < 0)
-								continue;
-							if (ci >= _this->cellsX || cj >= _this->cellsY || ck >= _this->cellsZ)
-								continue;
-							cells.push_back(&_this->GetCell(ci, cj, ck));
-						}
-					}
-				}
-				
 				if (isTriMesh) {
 					auto triMeshShape = (btTriangleMeshShape*)colObj->m_collisionShape;
 					btVector3 cellMin = _this->GetCellMinPos(i, j, k);
@@ -149,36 +141,123 @@ void _UpdateCellsStatic(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
 
 					callbackInst.hit = false;
 					triMeshShape->processAllTriangles(&callbackInst, cellMin, cellMax);
-
-					if (!callbackInst.hit) {
-						numSkipped++;
-
-						if (ADD) {
-							continue; // No tris in this AABB, ignore
-						} else {
-							// Remove it anyway
-						}
-					}
+					if (!callbackInst.hit)
+						continue; // No tris in this AABB, ignore
 				}
 
-				for (auto cell : cells) {
-					if (ADD) {
-						bool alreadyExists = false;
-						for (auto staticHandle : cell->staticHandles) {
-							if (staticHandle == proxy) {
-								alreadyExists = true;
-								break;
-							}
-						}
-						if (!alreadyExists)
-							cell->staticHandles.push_back(proxy);
-					} else {
-						cell->RemoveStatic(proxy);
-					}
-				}
+				for (int ci = btMax(i - 1, 0); ci <= btMin(i + 1, _this->cellsX - 1); ci++)
+					for (int cj = btMax(j - 1, 0); cj <= btMin(j + 1, _this->cellsY - 1); cj++)
+						for (int ck = btMax(k - 1, 0); ck <= btMin(k + 1, _this->cellsZ - 1); ck++)
+							inCell[ci * _this->cellsY * _this->cellsZ + cj * _this->cellsZ + ck] = 1;
 			}
 		}
 	}
+
+	std::vector<int> result;
+	for (int c = 0; c < _this->totalCells; c++)
+		if (inCell[c])
+			result.push_back(c);
+	return result;
+}
+
+// Finding the cells of a big triangle mesh is slow, and every arena of a game mode has the same
+// meshes (shared shapes) at the same places, so the cells are cached for each shape, bounds and grid
+// (Other shapes only depend on their bounds, and are cached as well, so that whole tables can be shared)
+static std::shared_ptr<const std::vector<int>> _GetStaticCells(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
+	btCollisionObject* colObj = (btCollisionObject*)proxy->m_clientObject;
+	bool isTriMesh = colObj && colObj->m_collisionShape->getShapeType() == TRIANGLE_MESH_SHAPE_PROXYTYPE;
+
+	struct Key {
+		const void* shape;
+		float values[12];
+		int dims[3];
+		bool operator<(const Key& other) const {
+			if (shape != other.shape)
+				return shape < other.shape;
+			int c = memcmp(values, other.values, sizeof(values));
+			if (c != 0)
+				return c < 0;
+			return memcmp(dims, other.dims, sizeof(dims)) < 0;
+		}
+	};
+	Key key = {};
+	key.shape = isTriMesh ? colObj->m_collisionShape : NULL;
+	for (int i = 0; i < 3; i++) {
+		key.values[i] = proxy->m_aabbMin[i];
+		key.values[3 + i] = proxy->m_aabbMax[i];
+		key.values[6 + i] = _this->minPos[i];
+		key.values[9 + i] = _this->maxPos[i];
+	}
+	key.dims[0] = _this->cellsX;
+	key.dims[1] = _this->cellsY;
+	key.dims[2] = _this->cellsZ;
+	// (The cell size follows from the bounds and the cell counts only approximately, so check it too)
+	static std::mutex cacheMutex;
+	static std::map<std::pair<Key, float>, std::shared_ptr<const std::vector<int>>> cache;
+	auto fullKey = std::make_pair(key, _this->cellSize);
+	{
+		std::lock_guard<std::mutex> lock(cacheMutex);
+		auto itr = cache.find(fullKey);
+		if (itr != cache.end())
+			return itr->second;
+	}
+	auto cells = std::make_shared<const std::vector<int>>(_CalcStaticCells(_this, proxy));
+	std::lock_guard<std::mutex> lock(cacheMutex);
+	return cache.emplace(fullKey, cells).first->second;
+}
+
+template <bool ADD>
+void _UpdateCellsStatic(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
+	if (ADD) {
+		proxy->staticCells = _GetStaticCells(_this, proxy);
+		_this->staticProxies.push_back(proxy);
+	} else {
+		auto& list = _this->staticProxies;
+		for (size_t i = 0; i < list.size(); i++) {
+			if (list[i] == proxy) {
+				list.erase(list.begin() + i);
+				break;
+			}
+		}
+		proxy->staticCells.reset();
+	}
+	_this->staticTableDirty = true;
+}
+
+void btRSBroadphase::_BuildStaticTable() {
+	// Tables are cached by the cell lists of the static proxies (which are themselves cached and shared)
+	std::vector<const void*> key = { (const void*)(size_t)totalCells };
+	for (auto* proxy : staticProxies)
+		key.push_back(proxy->staticCells.get());
+
+	static std::mutex cacheMutex;
+	static std::map<std::vector<const void*>, std::shared_ptr<const StaticTable>> cache;
+	{
+		std::lock_guard<std::mutex> lock(cacheMutex);
+		auto itr = cache.find(key);
+		if (itr != cache.end()) {
+			staticTable = itr->second;
+			staticTableDirty = false;
+			return;
+		}
+	}
+
+	auto table = std::make_shared<StaticTable>();
+	table->cellStart.assign(totalCells + 1, 0);
+	for (auto* proxy : staticProxies)
+		for (int c : *proxy->staticCells)
+			table->cellStart[c + 1]++;
+	for (int c = 0; c < totalCells; c++)
+		table->cellStart[c + 1] += table->cellStart[c];
+	table->proxyIndices.resize(table->cellStart[totalCells]);
+	std::vector<int> fill(table->cellStart.begin(), table->cellStart.end() - 1);
+	for (int i = 0; i < (int)staticProxies.size(); i++)
+		for (int c : *staticProxies[i]->staticCells)
+			table->proxyIndices[fill[c]++] = i;
+
+	std::lock_guard<std::mutex> lock(cacheMutex);
+	staticTable = cache.emplace(key, std::shared_ptr<const StaticTable>(table)).first->second;
+	staticTableDirty = false;
 }
 
 template <bool ADD>
@@ -327,8 +406,9 @@ void btRSBroadphase::rayTest(const btVector3& rayFrom, const btVector3& rayTo, b
 
 	if (rayLenSq < cellSizeSq) {
 
-		Cell& cell = cells[GetCellIdx(rayFrom)];
-		for (auto& otherProxy : cell.staticHandles)
+		int cellIdx = GetCellIdx(rayFrom);
+		Cell& cell = cells[cellIdx];
+		for (auto otherProxy : GetStaticHandles(cellIdx))
 			if (otherProxy->m_clientObject)
 				rayCallback.process(otherProxy);
 		for (auto& otherProxy : cell.dynHandles)
@@ -421,7 +501,7 @@ void btRSBroadphase::calculateOverlappingPairs(btCollisionDispatcher* dispatcher
 
 			Cell& cell = cells[proxy->cellIdx];
 			
-			for (auto& otherProxy : cell.staticHandles) {
+			for (auto otherProxy : GetStaticHandles(proxy->cellIdx)) {
 				if (!otherProxy->m_clientObject)
 					continue;
 

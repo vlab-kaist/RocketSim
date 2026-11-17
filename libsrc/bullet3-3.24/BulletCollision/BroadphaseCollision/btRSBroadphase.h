@@ -2,6 +2,7 @@
 
 #include "btOverlappingPairCache.h"
 #include <vector>
+#include <memory>
 
 struct btRSBroadphaseProxy : public btBroadphaseProxy
 {
@@ -12,6 +13,9 @@ struct btRSBroadphaseProxy : public btBroadphaseProxy
 
 	int shapeType;
 	int m_nextFree;
+
+	// Cells a static proxy is in (shared between proxies of the same object in other broadphases)
+	std::shared_ptr<const std::vector<int>> staticCells;
 
 	//	int			m_handleId;
 
@@ -54,13 +58,9 @@ public:
 	std::vector<std::pair<btRSBroadphaseProxy*, btRSBroadphaseProxy*>> activePairs;
 
 	struct Cell {
-		constexpr static int RESERVED_SIZE = 4;
+		// (Nothing reserved: most cells never hold anything, and an arena has thousands of them)
 		std::vector<btRSBroadphaseProxy*> dynHandles;
-		std::vector<btRSBroadphaseProxy*> staticHandles;
-		Cell() {
-			dynHandles.reserve(RESERVED_SIZE);
-			staticHandles.reserve(RESERVED_SIZE);
-		}
+		Cell() {}
 
 		void RemoveDyn(btRSBroadphaseProxy* proxy) {
 			for (int i = 0; i < dynHandles.size(); i++) {
@@ -71,16 +71,47 @@ public:
 			}
 		}
 
-		void RemoveStatic(btRSBroadphaseProxy* proxy) {
-			for (int i = 0; i < staticHandles.size(); i++) {
-				if (staticHandles[i] == proxy) {
-					staticHandles.erase(staticHandles.begin() + i);
-					return;
-				}
-			}
-		}
 	};
 	std::vector<Cell> cells;
+
+	// Static proxies, in the order they were added
+	std::vector<btRSBroadphaseProxy*> staticProxies;
+
+	// For each cell, the indices (in staticProxies) of the static proxies in it. Built from the proxies' cell
+	// lists when needed, and shared by all broadphases whose static proxies have the same cell lists.
+	struct StaticTable {
+		std::vector<int> cellStart; // Size totalCells + 1
+		std::vector<int> proxyIndices;
+	};
+	std::shared_ptr<const StaticTable> staticTable;
+	bool staticTableDirty = true;
+	void _BuildStaticTable();
+
+	// The static proxies in a cell, in the order they were added
+	struct StaticHandleList {
+		btRSBroadphaseProxy* const* proxies;
+		const int* indices;
+		int count;
+
+		int size() const { return count; }
+		btRSBroadphaseProxy* operator[](int i) const { return proxies[indices[i]]; }
+
+		struct Iterator {
+			btRSBroadphaseProxy* const* proxies;
+			const int* index;
+			btRSBroadphaseProxy* operator*() const { return proxies[*index]; }
+			Iterator& operator++() { index++; return *this; }
+			bool operator!=(const Iterator& other) const { return index != other.index; }
+		};
+		Iterator begin() const { return { proxies, indices }; }
+		Iterator end() const { return { proxies, indices + count }; }
+	};
+	StaticHandleList GetStaticHandles(int cellIdx) {
+		if (staticTableDirty)
+			_BuildStaticTable();
+		int start = staticTable->cellStart[cellIdx];
+		return { staticProxies.data(), staticTable->proxyIndices.data() + start, staticTable->cellStart[cellIdx + 1] - start };
+	}
 
 	Cell& GetCell(int i, int j, int k) {
 		int idx = i * cellsY * cellsZ + j * cellsZ + k;

@@ -1383,13 +1383,14 @@ void btCollisionWorld::rayTestMulti(const btVector3* raysFromWorld, const btVect
 	RS_PROF(31, "      cell loop");
 	// Visit the cell's objects in the order btRSBroadphase::rayTest() does, testing each ray against
 	// them as btSingleRayCallback::process() would
-	btRSBroadphase::Cell& cell = broadphase->cells[cellIdx];
-	for (int list = 0; list < 2; list++)
+	btRSBroadphase::StaticHandleList staticHandles = broadphase->GetStaticHandles(cellIdx);
+	const auto& dynHandles = broadphase->cells[cellIdx].dynHandles;
+	int numStatic = staticHandles.size();
+	int numHandles = numStatic + (int)dynHandles.size();
 	{
-		auto& handles = list == 0 ? cell.staticHandles : cell.dynHandles;
-		for (size_t h = 0; h < handles.size(); h++)
+		for (int h = 0; h < numHandles; h++)
 		{
-			btRSBroadphaseProxy* proxy = handles[h];
+			btRSBroadphaseProxy* proxy = h < numStatic ? staticHandles[h] : dynHandles[h - numStatic];
 			if (!proxy->m_clientObject)
 				continue;
 			btCollisionObject* collisionObject = (btCollisionObject*)proxy->m_clientObject;
