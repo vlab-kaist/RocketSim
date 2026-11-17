@@ -80,6 +80,34 @@ void* btDefaultVehicleRaycaster::castRay(const btVector3& from, const btVector3&
 void btDefaultVehicleRaycaster::castRays(const btVector3* from, const btVector3* to, int numRays, const btCollisionObject* ignoreObj, btVehicleRaycasterResult* results, void** hitObjects)
 {
 	constexpr int MAX_RAYS = 8;
+
+	// RocketSim: the direct path, with the same results
+	if (numRays <= MAX_RAYS)
+	{
+		btCollisionWorld::RSRayHit hits[MAX_RAYS];
+		if (m_dynamicsWorld->rsWheelRays(from, to, numRays, btBroadphaseProxy::CharacterFilter | addedFilterMask, btBroadphaseProxy::AllFilter, ignoreObj, m_minHitDistSq, hits))
+		{
+			for (int i = 0; i < numRays; i++)
+			{
+				hitObjects[i] = 0;
+				// MinDistRayResultCallback::getResult()
+				if (hits[i].object)
+				{
+					const btRigidBody* body = btRigidBody::upcast(hits[i].object);
+					if (body && body->hasContactResponse())
+					{
+						results[i].m_hitPointInWorld = hits[i].point;
+						results[i].m_hitNormalInWorld = hits[i].normal;
+						results[i].m_hitNormalInWorld.normalize();
+						results[i].m_distFraction = hits[i].fraction;
+						hitObjects[i] = (void*)body;
+					}
+				}
+			}
+			return;
+		}
+	}
+
 	if (numRays > MAX_RAYS)
 	{
 		btVehicleRaycaster::castRays(from, to, numRays, ignoreObj, results, hitObjects);

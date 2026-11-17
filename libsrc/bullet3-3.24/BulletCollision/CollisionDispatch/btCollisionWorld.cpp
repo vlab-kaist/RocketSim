@@ -1490,6 +1490,202 @@ void btCollisionWorld::rayTestMulti(const btVector3* raysFromWorld, const btVect
 	}
 }
 
+namespace
+{
+// Applies a candidate hit as btDefaultVehicleRaycaster's callback would (rejecting hits too close to the
+// ray start), and returns the ray's closest fraction after it
+struct RSWheelRay
+{
+	btVector3 from, to;
+	btScalar minDistSq;
+	btCollisionWorld::RSRayHit* hit;
+
+	btScalar report(const btCollisionObject* object, const btVector3& normal, btScalar fraction) const
+	{
+		btVector3 hitPoint;
+		hitPoint.setInterpolate3(from, to, fraction);
+		if ((hitPoint - from).length2() < minDistSq)
+			return hit->fraction;
+		hit->fraction = fraction;
+		hit->object = object;
+		hit->normal = normal;
+		hit->point.setInterpolate3(from, to, fraction);
+		return fraction;
+	}
+};
+
+// For shapes without a special case: a callback that hands hits to RSWheelRay::report()
+struct RSWheelRayAdapter : public btCollisionWorld::RayResultCallback
+{
+	const RSWheelRay* m_ray;
+	RSWheelRayAdapter(const RSWheelRay* ray) : m_ray(ray) { m_closestHitFraction = ray->hit->fraction; }
+	virtual btScalar addSingleResult(btCollisionWorld::LocalRayResult& rayResult, bool normalInWorldSpace)
+	{
+		btAssert(normalInWorldSpace);
+		m_closestHitFraction = m_ray->report(rayResult.m_collisionObject, rayResult.m_hitNormalLocal, rayResult.m_hitFraction);
+		return m_closestHitFraction;
+	}
+};
+
+// btTriangleRaycastCallback (no flags) reporting to RSWheelRay::report()
+struct RSWheelMeshCallback : public btTriangleRaycastCallback
+{
+	const RSWheelRay* m_ray;
+	const btCollisionObject* m_object;
+	const btMatrix3x3* m_basis;
+
+	RSWheelMeshCallback(const btVector3& fromLocal, const btVector3& toLocal, const RSWheelRay* ray, const btCollisionObject* object, const btMatrix3x3* basis)
+		: btTriangleRaycastCallback(fromLocal, toLocal, 0), m_ray(ray), m_object(object), m_basis(basis)
+	{
+		m_hitFraction = ray->hit->fraction;
+	}
+
+	virtual btScalar reportHit(const btVector3& hitNormalLocal, btScalar hitFraction, int partId, int triangleIndex)
+	{
+		return m_ray->report(m_object, (*m_basis) * hitNormalLocal, hitFraction);
+	}
+};
+}  // namespace
+
+bool btCollisionWorld::rsWheelRays(const btVector3* raysFromWorld, const btVector3* raysToWorld, int numRays, int filterGroup, int filterMask,
+								   const btCollisionObject* ignoreObj, btScalar minDistSq, RSRayHit* hits) const
+{
+	constexpr int MAX_RAYS = 32;
+	btRSBroadphase* broadphase = m_rsBroadphase;
+	if (!broadphase || numRays > MAX_RAYS)
+		return false;
+	for (int r = 0; r < numRays; r++)
+		if (raysFromWorld[r].distance2(raysToWorld[r]) >= broadphase->cellSizeSq)
+			return false;
+
+	RSWheelRay rays[MAX_RAYS];
+	int rayCells[MAX_RAYS];
+	btVector3 rayMin[MAX_RAYS], rayMax[MAX_RAYS];
+	for (int r = 0; r < numRays; r++)
+	{
+		hits[r] = RSRayHit();
+		rays[r] = { raysFromWorld[r], raysToWorld[r], minDistSq, &hits[r] };
+		rayCells[r] = broadphase->GetCellIdx(raysFromWorld[r]);
+		rayMin[r] = raysFromWorld[r];
+		rayMax[r] = raysFromWorld[r];
+		rayMin[r].setMin(raysToWorld[r]);
+		rayMax[r].setMax(raysToWorld[r]);
+	}
+
+	// Rays are handled in groups by the cell they start in, in the order of their first ray
+	bool done[MAX_RAYS] = {};
+	for (int first = 0; first < numRays; first++)
+	{
+		if (done[first])
+			continue;
+		int group[MAX_RAYS], groupSize = 0;
+		for (int k = first; k < numRays; k++)
+		{
+			if (!done[k] && rayCells[k] == rayCells[first])
+			{
+				done[k] = true;
+				group[groupSize++] = k;
+			}
+		}
+
+		// The cell's objects in the order btRSBroadphase::rayTest() visits them
+		int cellIdx = rayCells[first];
+		btRSBroadphase::StaticHandleList staticHandles = broadphase->GetStaticHandles(cellIdx);
+		const auto& dynHandles = broadphase->cells[cellIdx].dynHandles;
+		int numStatic = staticHandles.size();
+		int numHandles = numStatic + (int)dynHandles.size();
+		for (int h = 0; h < numHandles; h++)
+		{
+			btRSBroadphaseProxy* proxy = h < numStatic ? staticHandles[h] : dynHandles[h - numStatic];
+			if (!proxy->m_clientObject)
+				continue;
+			btCollisionObject* collisionObject = (btCollisionObject*)proxy->m_clientObject;
+
+			// RayResultCallback::needsCollision()
+			if (!((proxy->m_collisionFilterGroup & filterMask) != 0 && (filterGroup & proxy->m_collisionFilterMask)) || collisionObject == ignoreObj)
+				continue;
+
+			const btCollisionShape* shape = collisionObject->getCollisionShape();
+			const btTransform& worldTransform = collisionObject->getWorldTransform();
+
+			bool haveAabb = false;
+			btVector3 objMin, objMax;
+			int active[MAX_RAYS], numActive = 0;
+			for (int g = 0; g < groupSize; g++)
+			{
+				int r = group[g];
+				if (hits[r].fraction == btScalar(0.f))
+					continue;
+				if (!collisionObject->isStaticObject())
+				{
+					if (!haveAabb)
+					{
+						shape->getAabb(worldTransform, objMin, objMax);
+						haveAabb = true;
+					}
+					const btVector3 pad(btScalar(1e-3), btScalar(1e-3), btScalar(1e-3));
+					if (!TestAabbAgainstAabb2(rayMin[r] - pad, rayMax[r] + pad, objMin, objMax))
+						continue;
+				}
+				active[numActive++] = r;
+			}
+			if (numActive == 0)
+				continue;
+
+			int shapeType = shape->getShapeType();
+			if (shapeType == STATIC_PLANE_PROXYTYPE && worldTransform.getOrigin().isZero() && worldTransform.getBasis() == btMatrix3x3::getIdentity())
+			{
+				// The plane test of rayTestSingleInternal(), without the (identity) transform
+				const btStaticPlaneShape* plane = (const btStaticPlaneShape*)shape;
+				const btVector3& planeNormal = plane->getPlaneNormal();
+				for (int i = 0; i < numActive; i++)
+				{
+					const RSWheelRay& ray = rays[active[i]];
+					btScalar distFrom = planeNormal.dot(ray.from) - plane->getPlaneConstant();
+					btScalar distTo = planeNormal.dot(ray.to) - plane->getPlaneConstant();
+					if (distFrom * distTo >= btScalar(0))
+						continue;
+					btScalar hitFraction = distFrom / (distFrom - distTo);
+					if (hitFraction < ray.hit->fraction)
+						ray.report(collisionObject, distFrom > 0 ? planeNormal : -planeNormal, hitFraction);
+				}
+			}
+			else if (shapeType == TRIANGLE_MESH_SHAPE_PROXYTYPE)
+			{
+				btBvhTriangleMeshShape* triangleMesh = (btBvhTriangleMeshShape*)shape;
+				btTransform worldTocollisionObject = worldTransform.inverse();
+				btVector3 fromLocal[MAX_RAYS], toLocal[MAX_RAYS];
+				alignas(RSWheelMeshCallback) unsigned char storage[MAX_RAYS][sizeof(RSWheelMeshCallback)];
+				btTriangleCallback* callbacks[MAX_RAYS];
+				for (int i = 0; i < numActive; i++)
+				{
+					fromLocal[i] = worldTocollisionObject * rays[active[i]].from;
+					toLocal[i] = worldTocollisionObject * rays[active[i]].to;
+					callbacks[i] = new (storage[i]) RSWheelMeshCallback(fromLocal[i], toLocal[i], &rays[active[i]], collisionObject, &worldTransform.getBasis());
+				}
+				triangleMesh->performRaycasts(callbacks, fromLocal, toLocal, numActive);
+				for (int i = 0; i < numActive; i++)
+					((RSWheelMeshCallback*)callbacks[i])->~RSWheelMeshCallback();
+			}
+			else
+			{
+				for (int i = 0; i < numActive; i++)
+				{
+					const RSWheelRay& ray = rays[active[i]];
+					btTransform fromTrans, toTrans;
+					fromTrans.setIdentity();
+					fromTrans.setOrigin(ray.from);
+					toTrans.setIdentity();
+					toTrans.setOrigin(ray.to);
+					RSWheelRayAdapter adapter(&ray);
+					rayTestSingle(fromTrans, toTrans, collisionObject, shape, worldTransform, adapter);
+				}
+			}
+		}
+	}
+	return true;
+}
+
 void btCollisionWorld::rayTest(const btVector3& rayFromWorld, const btVector3& rayToWorld, RayResultCallback& resultCallback) const
 {
 	//BT_PROFILE("rayTest");

@@ -422,6 +422,20 @@ public:
 	/// The callbacks must filter objects the same way (needsCollision() is only asked of the first).
 	void rayTestMulti(const btVector3* raysFromWorld, const btVector3* raysToWorld, RayResultCallback** resultCallbacks, int numRays) const;
 
+	/// RocketSim: the closest hit of a ray that is at least sqrt(minDistSq) from its start
+	struct RSRayHit
+	{
+		btScalar fraction = 1;
+		const btCollisionObject* object = NULL;
+		btVector3 normal, point;
+	};
+	/// RocketSim: the wheel rays of a car (at most 32). Same results as rayTestMulti() with
+	/// ClosestRayResultCallbacks that ignore hits closer than sqrt(minDistSq) to the ray start
+	/// (btDefaultVehicleRaycaster), but without callback objects. Returns false (and does nothing)
+	/// if the rays can't take this path (no btRSBroadphase, or a ray longer than a cell).
+	bool rsWheelRays(const btVector3* raysFromWorld, const btVector3* raysToWorld, int numRays, int filterGroup, int filterMask,
+					 const btCollisionObject* ignoreObj, btScalar minDistSq, RSRayHit* hits) const;
+
 	/// convexTest performs a swept convex cast on all objects in the btCollisionWorld, and calls the resultCallback
 	/// This allows for several queries: first hit, all hits, any hit, dependent on the value return by the callback.
 	void convexSweepTest(const btConvexShape* castShape, const btTransform& from, const btTransform& to, ConvexResultCallback& resultCallback, btScalar allowedCcdPenetration = btScalar(0.)) const;
