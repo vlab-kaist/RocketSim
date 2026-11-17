@@ -626,6 +626,18 @@ Returns previous (callback, data))"},
         .ml_meth  = (PyCFunction)&Arena::Step,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
         .ml_doc   = R"(step(self, ticks: int = 1))"},
+    {.ml_name     = "save_snapshot",
+        .ml_meth  = (PyCFunction)&Arena::SaveSnapshot,
+        .ml_flags = METH_VARARGS,
+        .ml_doc   = R"(save_snapshot(self, snapshot: object = None) -> object
+Saves everything the arena's next ticks depend on. Pass a snapshot from an earlier call to reuse its memory.
+load_snapshot() then makes this arena (with the same cars) continue exactly as it did from here.
+Only the simulation is saved: Python-side stats (goals, demos, ...) and callbacks are not.)"},
+    {.ml_name     = "load_snapshot",
+        .ml_meth  = (PyCFunction)&Arena::LoadSnapshot,
+        .ml_flags = METH_VARARGS,
+        .ml_doc   = R"(load_snapshot(self, snapshot: object)
+Goes back to a snapshot saved from this arena)"},
     {.ml_name = "stop", .ml_meth = (PyCFunction)&Arena::Stop, .ml_flags = METH_NOARGS, .ml_doc = R"(stop(self)
 This can be called from within a callback to stop simulation early)"},
     {.ml_name     = "multi_step",
@@ -2590,6 +2602,81 @@ PyObject *Arena::Step (Arena *self_, PyObject *args_, PyObject *kwds_) noexcept
 		restoreException (self_);
 		return nullptr;
 	}
+
+	Py_RETURN_NONE;
+}
+
+namespace
+{
+constexpr char const *SNAPSHOT_CAPSULE = "RocketSim.ArenaSnapshot";
+
+void snapshotCapsuleDestructor (PyObject *capsule_) noexcept
+{
+	delete static_cast<RocketSim::ArenaSnapshot *> (PyCapsule_GetPointer (capsule_, SNAPSHOT_CAPSULE));
+}
+}
+
+PyObject *Arena::SaveSnapshot (Arena *self_, PyObject *args_) noexcept
+{
+	PyObject *reuse = nullptr;
+	if (!PyArg_ParseTuple (args_, "|O", &reuse))
+		return nullptr;
+
+	try
+	{
+		if (reuse && reuse != Py_None)
+		{
+			auto const snapshot = static_cast<RocketSim::ArenaSnapshot *> (PyCapsule_GetPointer (reuse, SNAPSHOT_CAPSULE));
+			if (!snapshot)
+				return nullptr;
+			self_->arena->SaveSnapshot (*snapshot);
+			return PyRef<PyObject>::incRef (reuse).giftObject ();
+		}
+
+		auto snapshot = std::make_unique<RocketSim::ArenaSnapshot> ();
+		self_->arena->SaveSnapshot (*snapshot);
+		auto capsule = PyCapsule_New (snapshot.get (), SNAPSHOT_CAPSULE, &snapshotCapsuleDestructor);
+		if (!capsule)
+			return nullptr;
+		snapshot.release ();
+		return capsule;
+	}
+	catch (...)
+	{
+		return PyErr_NoMemory ();
+	}
+}
+
+PyObject *Arena::LoadSnapshot (Arena *self_, PyObject *args_) noexcept
+{
+	PyObject *capsule = nullptr;
+	if (!PyArg_ParseTuple (args_, "O", &capsule))
+		return nullptr;
+
+	auto const snapshot = static_cast<RocketSim::ArenaSnapshot *> (PyCapsule_GetPointer (capsule, SNAPSHOT_CAPSULE));
+	if (!snapshot)
+		return nullptr;
+
+	if (snapshot->arena != self_->arena.get ())
+	{
+		PyErr_SetString (PyExc_ValueError, "The snapshot was saved from another arena");
+		return nullptr;
+	}
+	if (snapshot->cars.size () != self_->arena->_cars.size ())
+	{
+		PyErr_SetString (PyExc_ValueError, "The snapshot is not from this arena (different cars)");
+		return nullptr;
+	}
+	for (std::size_t i = 0; i < snapshot->cars.size (); ++i)
+	{
+		if (snapshot->cars[i].id != self_->arena->_cars[i]->id)
+		{
+			PyErr_SetString (PyExc_ValueError, "The snapshot is not from this arena (different cars)");
+			return nullptr;
+		}
+	}
+
+	self_->arena->LoadSnapshot (*snapshot);
 
 	Py_RETURN_NONE;
 }

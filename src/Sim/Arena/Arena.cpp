@@ -1091,6 +1091,7 @@ namespace {
 }
 
 void Arena::SaveSnapshot(ArenaSnapshot& out) const {
+	out.arena = this;
 	out.tickCount = tickCount;
 
 	out.ballState = ball->_internalState;
@@ -1144,6 +1145,8 @@ void Arena::SaveSnapshot(ArenaSnapshot& out) const {
 }
 
 void Arena::LoadSnapshot(const ArenaSnapshot& in) {
+	if (in.arena != this)
+		RS_ERR_CLOSE("Arena::LoadSnapshot(): the snapshot was saved from another arena");
 	if (in.cars.size() != _cars.size())
 		RS_ERR_CLOSE("Arena::LoadSnapshot(): the snapshot has " << in.cars.size() << " cars, the arena has " << _cars.size());
 

@@ -55,6 +55,7 @@ struct ArenaSnapshot {
 		int cellIdx, iIdx, jIdx, kIdx;
 	};
 
+	const class Arena* arena = NULL; // The arena it was saved from, the only one it can be loaded into
 	uint64_t tickCount = 0;
 	BallState ballState;
 	Vec ballVelocityImpulseCache;
@@ -184,7 +185,7 @@ public:
 	// Get a deep copy of the arena
 	Arena* Clone(bool copyCallbacks);
 
-	// Save everything the next ticks depend on, and go back to it later (same cars only)
+	// Save everything the next ticks depend on, and go back to it later (into this same arena, with the same cars)
 	void SaveSnapshot(ArenaSnapshot& out) const;
 	void LoadSnapshot(const ArenaSnapshot& in);
 

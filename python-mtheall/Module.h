@@ -857,6 +857,8 @@ struct Arena
 	static PyObject *SetSaveEventCallback (Arena *self_, PyObject *args_, PyObject *kwds_) noexcept;
 	static PyObject *SetMutatorConfig (Arena *self_, PyObject *args_, PyObject *kwds_) noexcept;
 	static PyObject *Step (Arena *self_, PyObject *args_, PyObject *kwds_) noexcept;
+	static PyObject *SaveSnapshot (Arena *self_, PyObject *args_) noexcept;
+	static PyObject *LoadSnapshot (Arena *self_, PyObject *args_) noexcept;
 	static PyObject *Stop (Arena *self_) noexcept;
 
 	static PyObject *MultiStep (PyObject *dummy_, PyObject *args_, PyObject *kwds_) noexcept;

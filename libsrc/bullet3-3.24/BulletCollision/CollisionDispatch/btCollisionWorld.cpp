@@ -1341,36 +1341,39 @@ void btCollisionWorld::rayTestMulti(const btVector3* raysFromWorld, const btVect
 	}
 
 	// Rays that start in different cells are handled in groups, one per cell
-	int cellIdx = broadphase->GetCellIdx(raysFromWorld[0]);
-	for (int r = 1; r < numRays; r++)
+	int rayCells[MAX_RAYS];
+	bool sameCell = true;
+	for (int r = 0; r < numRays; r++)
 	{
-		if (broadphase->GetCellIdx(raysFromWorld[r]) != cellIdx)
-		{
-			btVector3 groupFrom[MAX_RAYS], groupTo[MAX_RAYS];
-			RayResultCallback* groupCallbacks[MAX_RAYS];
-			bool done[MAX_RAYS] = {};
-			for (int first = 0; first < numRays; first++)
-			{
-				if (done[first])
-					continue;
-				int groupCell = broadphase->GetCellIdx(raysFromWorld[first]);
-				int n = 0;
-				for (int k = first; k < numRays; k++)
-				{
-					if (!done[k] && broadphase->GetCellIdx(raysFromWorld[k]) == groupCell)
-					{
-						done[k] = true;
-						groupFrom[n] = raysFromWorld[k];
-						groupTo[n] = raysToWorld[k];
-						groupCallbacks[n] = resultCallbacks[k];
-						n++;
-					}
-				}
-				rayTestMulti(groupFrom, groupTo, groupCallbacks, n);
-			}
-			return;
-		}
+		rayCells[r] = broadphase->GetCellIdx(raysFromWorld[r]);
+		sameCell &= rayCells[r] == rayCells[0];
 	}
+	if (!sameCell)
+	{
+		btVector3 groupFrom[MAX_RAYS], groupTo[MAX_RAYS];
+		RayResultCallback* groupCallbacks[MAX_RAYS];
+		bool done[MAX_RAYS] = {};
+		for (int first = 0; first < numRays; first++)
+		{
+			if (done[first])
+				continue;
+			int n = 0;
+			for (int k = first; k < numRays; k++)
+			{
+				if (!done[k] && rayCells[k] == rayCells[first])
+				{
+					done[k] = true;
+					groupFrom[n] = raysFromWorld[k];
+					groupTo[n] = raysToWorld[k];
+					groupCallbacks[n] = resultCallbacks[k];
+					n++;
+				}
+			}
+			rayTestMulti(groupFrom, groupTo, groupCallbacks, n);
+		}
+		return;
+	}
+	int cellIdx = rayCells[0];
 
 	btTransform rayFromTrans[MAX_RAYS], rayToTrans[MAX_RAYS];
 	btVector3 rayMin[MAX_RAYS], rayMax[MAX_RAYS];
