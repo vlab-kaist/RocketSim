@@ -104,6 +104,11 @@ def _handbrake_at(rec: Recording, src: np.ndarray, delay: int, end: int, car: in
 
 def _rot_rows(pyr: np.ndarray) -> list[list[float]]:
     m = euler_to_rotmat(pyr)
+    # Entries within 1e-6 of 0 or +-1 (below the packet's angle precision) are taken as exact: the game
+    # has them exact for axis-aligned set states, and the first rotation quantization rounds an exact
+    # zero component on a tie, so the sign of a leftover 1e-9 would pick the side
+    m = np.where(np.abs(m) < 1e-6, 0.0, m)
+    m = np.where(np.abs(np.abs(m) - 1.0) < 1e-6, np.sign(m), m)
     return [m[:, 0].tolist(), m[:, 1].tolist(), m[:, 2].tolist()]
 
 
