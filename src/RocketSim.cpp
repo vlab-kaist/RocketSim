@@ -194,6 +194,8 @@ void RocketSim::InitFromMem(const std::map<GameMode, std::vector<FileData>>& mes
 				btTriangleInfoMap* infoMap = new btTriangleInfoMap();
 				btGenerateInternalEdgeInfo(bvtMesh, infoMap);
 				bvtMesh->setTriangleInfoMap(infoMap);
+				// Shared by every arena: arenas never free the BVH
+				bvtMesh->m_ownsBvh = false;
 				meshes.push_back(bvtMesh);
 
 				idx++;

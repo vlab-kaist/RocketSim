@@ -1604,9 +1604,6 @@ void Arena::_SetupArenaCollisionShapes() {
 		int mask = isHoopsNet ? CollisionMasks::HOOPS_NET : 0;
 		_worldCollisionBvhShapes.push_back(mesh);
 		_AddStaticCollisionShape(mesh, btVector3(0, 0, 0), mask, mask);
-
-		// Don't free the BVH when we deconstruct this arena
-		mesh->m_ownsBvh = false;
 	}
 
 	{ // Add arena collision planes (floor/walls/ceiling)

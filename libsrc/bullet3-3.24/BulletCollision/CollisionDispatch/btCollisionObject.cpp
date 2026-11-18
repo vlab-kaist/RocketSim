@@ -82,6 +82,7 @@ void btCollisionObject::activate(bool forceActivation) const
 void btCollisionObject::setWorldTransform(const btTransform& worldTrans) {
 	m_updateRevision++;
 	m_worldTransform = worldTrans;
-	if (m_collisionShape)
+	// (Triangle meshes are shared between threads and don't use the cache)
+	if (m_collisionShape && m_collisionShape->getShapeType() != TRIANGLE_MESH_SHAPE_PROXYTYPE)
 		m_collisionShape->m_aabbCached = false;
 }

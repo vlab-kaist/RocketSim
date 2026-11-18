@@ -40,6 +40,10 @@ void btCollisionShape::getAabb(const btTransform& t, btVector3& aabbMin, btVecto
 	if (m_shapeType == SPHERE_SHAPE_PROXYTYPE)
 		return ((btSphereShape*)this)->getAabb(t, aabbMin, aabbMax);
 
+	// Triangle meshes are shared by the arenas of all threads, so they can't use the cache (a data race)
+	if (m_shapeType == TRIANGLE_MESH_SHAPE_PROXYTYPE)
+		return ((btTriangleMeshShape*)this)->getAabb(t, aabbMin, aabbMax);
+
 	constexpr auto fnFastCompareTransforms = [](const btTransform& a, const btTransform& b) -> bool {
 		return
 			(a.m_origin == b.m_origin) &&
