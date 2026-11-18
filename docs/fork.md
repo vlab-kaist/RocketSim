@@ -53,21 +53,26 @@ for the same binary and the same libm; across compilers or libm versions they ma
 `validation/` (see its README) records scenarios in the real game through RLBot v5 and replays them
 open loop in this fork and in v3. Recording sets: `recordings/real-2026-11-17`, `real-2026-11-18`
 (driving, jumps, ball, air touches, bounces, suspension, air bumps, flip resets), `real-2026-11-18-carcar`
-(94 bump/demo scenarios x3), `real-2026-11-18-pitchlock`, `real-2026-11-18-kickoff`, `real-2026-11-19-roof`.
+(94 bump/demo scenarios x3), `real-2026-11-18-pitchlock`, `real-2026-11-18-kickoff`, `real-2026-11-19-roof`,
+`real-2026-11-19-random` (55 random solo plays on the ground, in the air and on walls, x2).
 
 ```sh
 cd validation && .venv/bin/python -m rlval.compare recordings/real-2026-11-17 recordings/real-2026-11-18 \
     recordings/real-2026-11-18-pitchlock recordings/real-2026-11-18-carcar recordings/real-2026-11-19-roof --backends cpp
 ```
 
-Status (7bfbf026): 879 valid recordings, median car position error at 1 s 0.01 uu, 808 never diverge past
-10 uu, demo outcomes match the game in all of them.
+Status (7bfbf026): 879 valid recordings (scripted scenarios), median car position error at 1 s 0.01 uu,
+808 never diverge past 10 uu, demo outcomes match the game in all of them. Random solo play
+(`real-2026-11-19-random`, 110): median 0.05 uu at 1 s, 66 never diverge (RocketSim v3: 4.69 uu, 39).
 
 Known remaining differences:
 - Perfectly symmetric head-on bump (`bump_headon`): which side the car tips to depends on sub-1e-5
   asymmetries; the fork tips the other way than the game (v3 matches it).
-- Random two-car play (`rand_pair_*`): some runs diverge in both the fork and v3 by about the same
-  amount; most likely the game's ±1 tick input timing jitter, not the physics.
+- Random play (`rand_pair_*`, `rand_ground/air/wall_*`): most divergences happen in only one of the two
+  repeats of a scenario (the game's ±1 tick input timing jitter). Of the ones both repeats share, only
+  `rand_ground_05` is matched by v3: a 0.15 uu/s vertical velocity difference while the car settles on its
+  suspension after the state set (boosting on the ground) leaves it 0.04 uu low, so a later landing touches
+  one tick early.
 - Fast body landings (`roof_land_fast`, `side_land`, `nose_land`: the car body hits the floor at
   ~1000 uu/s): the fork and v3 diverge at the same tick by the same amount. On the first contact tick the
   game stops the fall almost completely (-900 -> -5 uu/s) with stronger friction, while the fork absorbs it

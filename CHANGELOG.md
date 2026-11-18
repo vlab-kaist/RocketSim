@@ -18,7 +18,8 @@ Bench checksums identify the exact physics; they change whenever results change.
   `Car/Ball::SetState` forget the body's kept contacts.
 - **Air damping from the tick-start angular velocity** (f15ddee1), as the game and v3: a car pushed by
   another car's wheels no longer loses 4% spin that tick. demo_air_dz-40 55 -> 0.3 uu.
-- rlval: roof/body-floor contact scenarios and recordings (e02a5479).
+- rlval: roof/body-floor contact scenarios and recordings (e02a5479); random solo play recorded
+  (`real-2026-11-19-random`, 55 x2): fork median 0.05 uu at 1 s and 66/110 never diverging, v3 4.69 uu and 39/110.
 
 ## 2026-11-18
 
