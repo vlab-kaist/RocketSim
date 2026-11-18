@@ -82,7 +82,7 @@ def score(rec: Recording, backend: str, delay: int, inputs: str, max_seconds: fl
         car_pos_mean=float(pos_err.mean()),
         rec_demo=bool((rec.car_demolished_timeout[idx] >= 0).any()),
         sim_demo=any(e["demo"] for e in res.events),
-        sim_bumps=sum(not e["demo"] for e in res.events),
+        sim_bumps=sum(not e["demo"] and not e.get("goal") for e in res.events),
         first_diverge=float(t[off[0]]) if len(off) else float("inf"),
     )
 

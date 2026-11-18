@@ -87,6 +87,13 @@ def replay(spec: dict, name: str = "cpp") -> dict:
 
     arena.set_car_bump_callback(on_bump)
 
+    def on_goal(arena=None, team=None, data=None, **kw):
+        # (Called every tick the ball is in a goal; keep the first)
+        if not any(e.get("goal") for e in events):
+            events.append({"step": step_index[0], "goal": True, "demo": False, "team": int(team)})
+
+    arena.set_goal_score_callback(on_goal)
+
     ball_rows, car_rows = [], []
     for i, step in enumerate(spec["steps"]):
         step_index[0] = i

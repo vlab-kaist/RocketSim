@@ -8,6 +8,15 @@ Bench checksums identify the exact physics; they change whenever results change.
 
 ## 2026-11-19
 
+- **Goal timing checked against the game**: 14 goal scenarios x3 (rolling 100-3000 uu/s, in the air up to
+  just under the crossbar, near the posts, angled, lob, spinning). `Arena::IsBallScored()` scores on the
+  same tick as the game in all 42 (`python -m rlval.goals`); the slow roll brackets the game's threshold
+  between y 5215.38 and 5216.2, the fork's is 5215.5 (goal line 5124.25 + ball radius). No change needed.
+  rlval: the recorder stores `goal_run_tick`, the cpp backend reports goal events, `job.build_job(extra_steps=)`.
+- **Suspension right after a state set checked**: 15 settle scenarios x3 (set at/below/above the resting
+  height, starting off with throttle/boost/steer/reverse/handbrake/jump, set while moving). Settling matches
+  (0.01 uu); starting off from rest differs by up to 0.8 uu at 1 s in the fork and v3 alike, all from the first
+  tick (the recorded start state still carries ~1 uu/s from the state set), not from the suspension.
 - **Contact points kept across ticks** (7bfbf026). One manifold per body pair is kept while the pair
   overlaps: kept points are refreshed, the tick's fresh points merged in, warm-started from the kept
   normal impulse (as the game's Bullet and RocketSim v3 do). Car-car contacts are not kept. A car's

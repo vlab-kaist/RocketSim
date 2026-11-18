@@ -54,7 +54,9 @@ for the same binary and the same libm; across compilers or libm versions they ma
 open loop in this fork and in v3. Recording sets: `recordings/real-2026-11-17`, `real-2026-11-18`
 (driving, jumps, ball, air touches, bounces, suspension, air bumps, flip resets), `real-2026-11-18-carcar`
 (94 bump/demo scenarios x3), `real-2026-11-18-pitchlock`, `real-2026-11-18-kickoff`, `real-2026-11-19-roof`,
-`real-2026-11-19-random` (55 random solo plays on the ground, in the air and on walls, x2).
+`real-2026-11-19-random` (55 random solo plays on the ground, in the air and on walls, x2),
+`real-2026-11-19-settle` (suspension right after a state set), `real-2026-11-19-goal` (goal timing; check
+with `python -m rlval.goals`).
 
 ```sh
 cd validation && .venv/bin/python -m rlval.compare recordings/real-2026-11-17 recordings/real-2026-11-18 \
@@ -64,6 +66,8 @@ cd validation && .venv/bin/python -m rlval.compare recordings/real-2026-11-17 re
 Status (7bfbf026): 879 valid recordings (scripted scenarios), median car position error at 1 s 0.01 uu,
 808 never diverge past 10 uu, demo outcomes match the game in all of them. Random solo play
 (`real-2026-11-19-random`, 110): median 0.05 uu at 1 s, 66 never diverge (RocketSim v3: 4.69 uu, 39).
+
+Goals: `IsBallScored()` scores on the same tick as the game in all 42 goal recordings.
 
 Known remaining differences:
 - Perfectly symmetric head-on bump (`bump_headon`): which side the car tips to depends on sub-1e-5

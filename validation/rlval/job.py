@@ -112,13 +112,15 @@ def _rot_rows(pyr: np.ndarray) -> list[list[float]]:
     return [m[:, 0].tolist(), m[:, 1].tolist(), m[:, 2].tolist()]
 
 
-def build_job(rec: Recording, delay: int = 0, start: int | None = None, max_steps: int | None = None, inputs: str = "last") -> Job:
+def build_job(rec: Recording, delay: int = 0, start: int | None = None, max_steps: int | None = None, inputs: str = "last", extra_steps: int = 0) -> Job:
     """Build a replay job from the run phase of a recording.
 
     `delay` shifts which packet's input drives each step: the step from packet i
     to i+1 uses the input reported at packet i + delay (clamped to the recording).
     `inputs` selects the input source: "last" (what the game reports it applied)
     or "sent" (what the recorder sent in reply to each packet).
+    `extra_steps` adds that many 1-tick steps past the recording, with the last input (for events the
+    recording stopped at, like a goal); they have no recorded index.
     """
     start = find_start(rec) if start is None else start
     end = len(rec.frame_num) - 1
@@ -162,6 +164,8 @@ def build_job(rec: Recording, delay: int = 0, start: int | None = None, max_step
         controls = np.nan_to_num(src[j], nan=0.0)
         steps.append({"ticks": ticks, "controls": controls.tolist()})
         indices.append(i + 1)
+    for _ in range(extra_steps):
+        steps.append({"ticks": 1, "controls": steps[-1]["controls"] if steps else np.zeros((len(cars), 8)).tolist()})
     spec = {
         "game_mode": _game_mode(rec.meta.get("game_mode", "soccar")),
         "gravity_z": float(rec.meta.get("gravity_z", -650.0)),

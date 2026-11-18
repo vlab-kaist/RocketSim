@@ -614,8 +614,66 @@ def roof_contacts() -> list[Scenario]:
     return out
 
 
+def suspension_settle() -> list[Scenario]:
+    """Wheels on the ground right after a state set: the suspension settling, and starting off from rest.
+    The run starts with the state set (settle=0), as training resets and the random plays do."""
+    out = []
+    # Set at, slightly below and slightly above the resting height, no input
+    for dz, label in ((0.0, "rest"), (-1.0, "low1"), (2.0, "high2"), (6.0, "high6"), (15.0, "high15")):
+        out.append(_solo(f"settle_{label}", Body(pos=(0.0, -3000.0, CAR_REST_Z + dz), yaw=math.pi / 2), [], 120, settle=0, tags=["settle"]))
+    # Starting off from the state set
+    starts = {
+        "throttle": {"throttle": 1},
+        "boost": {"throttle": 1, "boost": 1},
+        "boost_yaw": {"throttle": 1, "boost": 1, "yaw": -0.31},
+        "steer": {"throttle": 1, "steer": 1},
+        "reverse": {"throttle": -1},
+        "handbrake": {"throttle": 1, "steer": 0.5, "handbrake": 1},
+        "jump": {"jump": 1},
+    }
+    for label, controls in starts.items():
+        out.append(_solo(f"settle_start_{label}", _origin_car(y=-3000.0), [Segment(0, 20 if label == "jump" else 120, controls)], 120, settle=0, tags=["settle"]))
+    # Moving when set (the training resets set cars moving), with and without input
+    out.append(_solo("settle_moving_coast", _origin_car(y=-3000.0, vel=(0.0, 1200.0, 0.0)), [], 120, settle=0, tags=["settle"]))
+    out.append(_solo("settle_moving_boost", _origin_car(y=-3000.0, vel=(0.0, 1200.0, 0.0)), [Segment(0, 120, {"throttle": 1, "boost": 1})], 120, settle=0, tags=["settle"]))
+    out.append(_solo("settle_moving_steer", _origin_car(y=-3000.0, vel=(300.0, 1000.0, 0.0)), [Segment(0, 120, {"throttle": 0.5, "steer": -0.6})], 120, settle=0, tags=["settle"]))
+    return out
+
+
+def goals() -> list[Scenario]:
+    """The ball crossing the orange goal line (+y), to compare the tick the game counts the goal with the
+    simulator's goal check: rolling and flying at several speeds, heights and sideways offsets, at an angle,
+    and along the posts and under the crossbar. The cars are parked; the run ends at the goal."""
+    out = []
+
+    def shot(name, pos, vel, ang_vel=(0.0, 0.0, 0.0), duration=360):
+        out.append(Scenario(
+            name=name,
+            cars=[_parked_car(0), _parked_car(1)],
+            ball=Body(pos=pos, vel=vel, ang_vel=ang_vel),
+            scripts=[[], []],
+            duration=duration,
+            settle=0,
+            tags=["goal"],
+        ))
+
+    for speed in (100.0, 400.0, 1500.0, 3000.0):
+        y0 = 5215.0 - max(60.0, speed * 0.6)
+        shot(f"goal_roll_v{int(speed)}", (0.0, y0, BALL_REST_Z), (0.0, speed, 0.0))
+    for z in (300.0, 540.0):
+        shot(f"goal_air_z{int(z)}", (0.0, 4700.0, z), (0.0, 800.0, 0.0))
+    for x in (500.0, 790.0):
+        shot(f"goal_side_x{int(x)}", (x, 4900.0, BALL_REST_Z), (0.0, 500.0, 0.0))
+    shot("goal_angled", (-600.0, 4700.0, BALL_REST_Z), (500.0, 700.0, 0.0))
+    shot("goal_post_graze", (800.0, 4600.0, 300.0), (0.0, 900.0, 0.0))
+    shot("goal_crossbar_under", (0.0, 4600.0, 600.0), (0.0, 900.0, 0.0))
+    shot("goal_lob", (0.0, 4300.0, 900.0), (0.0, 700.0, -100.0))
+    shot("goal_spin_roll", (0.0, 4950.0, BALL_REST_Z), (0.0, 300.0, 0.0), ang_vel=(4.0, 0.0, 0.0))
+    return out
+
+
 def all_scenarios() -> list[Scenario]:
-    scenarios = driving() + jumping() + ball() + bumps_and_demos() + air_touches() + ball_bounces() + suspension() + air_bumps() + flip_resets() + random_play() + pitch_lock() + roof_contacts()
+    scenarios = driving() + jumping() + ball() + bumps_and_demos() + air_touches() + ball_bounces() + suspension() + air_bumps() + flip_resets() + random_play() + pitch_lock() + roof_contacts() + suspension_settle() + goals()
     names = [s.name for s in scenarios]
     assert len(names) == len(set(names)), "duplicate scenario names"
     return scenarios

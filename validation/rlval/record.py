@@ -193,7 +193,9 @@ class Recorder(Script):
                 self._finish(ended_by="match_phase")
             return
         if self.current is not None and self.phase == PHASE_RUN and self._score(packet) != self.start_score:
-            # A goal teleports the ball; keep what was recorded before it
+            # A goal teleports the ball; keep what was recorded before it, and the run tick of the first
+            # packet that shows the goal
+            self.builder.meta["goal_run_tick"] = packet.match_info.frame_num - self.run_start_frame
             self._finish(ended_by="goal")
             return
         frame = packet.match_info.frame_num
