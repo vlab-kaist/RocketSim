@@ -111,8 +111,15 @@ def main() -> None:
     header += f" {'pos@end':>9s} {'velmax':>8s} {'rotmax':>7s} {'ball@end':>9s} {'diverge':>8s}  demo(rec/sim) bumps"
     print(header)
     rows = []
+    skipped = []
     for f in files:
         rec = Recording.load(f)
+        run = np.flatnonzero(rec.run_tick >= 0)
+        if len(run) and (rec.car_demolished_timeout[: run[0] + 1] >= 0).any():
+            # Recorded before the recorder waited for respawns: a car demolished in the previous run was
+            # still missing, so the scenario didn't happen as set up
+            skipped.append(f.name)
+            continue
         for b in args.backends:
             if args.fit_delay:
                 s = best_delay(rec, b, args.inputs, range(-1, 5), args.max_seconds)
@@ -129,6 +136,8 @@ def main() -> None:
             )
 
     print()
+    if skipped:
+        print(f"skipped {len(skipped)} recordings that start with a demolished car: {' '.join(skipped)}")
     for b in args.backends:
         mine = [s for s in rows if s.backend == b]
         mismatches = sum(s.rec_demo != s.sim_demo for s in mine)

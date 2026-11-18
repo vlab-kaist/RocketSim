@@ -201,6 +201,10 @@ class Recorder(Script):
             self.dropped += frame - self.prev_frame - 1
         self.prev_frame = frame
 
+        if self.current is None and any(p.demolished_timeout >= 0 for p in packet.players):
+            # A car demolished at the end of the previous run is still waiting to respawn; a state set
+            # doesn't bring it back, so the next scenario would run without it
+            return
         if self.current is None and not self._begin(packet):
             self.logger.info("all scenarios recorded")
             self._game_interface.disconnect()
