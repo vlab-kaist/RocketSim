@@ -50,7 +50,11 @@ struct CarState : public PhysState {
 	// Not serialized
 	uint32_t jumpTicks = 0;
 	bool jumpHoldBroken = false;
-	float flipTime = 0; // When currently flipping, the time since we started flipping, else 0
+	// When currently flipping, the time since we started flipping, else the time since the last flip ended (or
+	// since the state was made). Air pitch is locked while it is below FLIP_PITCHLOCK_EXTRA_TIME (0.3s).
+	// A new state starts past that lock: the real game doesn't lock pitch at kickoffs or after a state set
+	// (validation/rlval pitch_lock scenarios and real kickoff recordings, 2026-11-18).
+	float flipTime = 1;
 
 	// True during a flip (not an auto-flip, and not after a flip)
 	bool isFlipping = false;

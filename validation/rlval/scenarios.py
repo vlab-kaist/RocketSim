@@ -498,8 +498,107 @@ def flip_resets() -> list[Scenario]:
     return out
 
 
+def _random_script(rng, duration: int, air: bool) -> list[Segment]:
+    """Random analog controls, changed every 6 to 30 ticks, with occasional jumps, boost and handbrake."""
+    out, t = [], 0
+    while t < duration:
+        end = min(duration, t + rng.randint(6, 30))
+        controls = {
+            "throttle": rng.choice([1.0, 1.0, 0.0, -1.0, rng.uniform(-1, 1)]),
+            "steer": rng.choice([0.0, rng.uniform(-1, 1), rng.uniform(-1, 1)]),
+            "pitch": rng.uniform(-1, 1) if air or rng.random() < 0.3 else 0.0,
+            "yaw": rng.uniform(-1, 1) if air or rng.random() < 0.3 else 0.0,
+            "roll": rng.uniform(-1, 1) if rng.random() < (0.6 if air else 0.2) else 0.0,
+            "boost": 1.0 if rng.random() < 0.35 else 0.0,
+            "handbrake": 1.0 if rng.random() < 0.15 else 0.0,
+        }
+        out.append(Segment(t, end, controls))
+        if rng.random() < 0.25:
+            # A short jump press (a jump, a second jump or a flip, depending on the state)
+            j = rng.randint(t, end - 1)
+            out.append(Segment(j, min(end, j + rng.randint(1, 8)), {"jump": 1.0}))
+        t = end
+    return out
+
+
+def random_play(count_ground: int = 25, count_air: int = 20, count_pair: int = 15, count_wall: int = 10, seed: int = 2026_11_18) -> list[Scenario]:
+    """Seeded random states and controls, so that no scenario is symmetric (no ties for the simulators to break)."""
+    import random
+
+    rng = random.Random(seed)
+    out = []
+    duration = 360
+
+    def rand_yaw():
+        return rng.uniform(-math.pi, math.pi)
+
+    for i in range(count_ground):
+        yaw = rand_yaw()
+        speed = rng.uniform(0, 2000)
+        x, y = rng.uniform(-3000, 3000), rng.uniform(-4000, 4000)
+        car = Body(pos=(x, y, CAR_REST_Z), yaw=yaw, vel=(speed * math.cos(yaw), speed * math.sin(yaw), 0.0), boost=rng.uniform(20, 100))
+        d, a = rng.uniform(300, 1200), rng.uniform(-0.6, 0.6)
+        bx, by = x + d * math.cos(yaw + a), y + d * math.sin(yaw + a)
+        bvel = (rng.uniform(-600, 600), rng.uniform(-600, 600), rng.choice([0.0, rng.uniform(0, 600)]))
+        ball = Body(pos=(max(-3500, min(3500, bx)), max(-4500, min(4500, by)), BALL_REST_Z + rng.choice([0.0, rng.uniform(0, 300)])), vel=bvel,
+                    ang_vel=(rng.uniform(-3, 3), rng.uniform(-3, 3), rng.uniform(-3, 3)))
+        out.append(Scenario(f"rand_ground_{i:02d}", [car, _parked_car(1)], ball, [_random_script(rng, duration, air=False), []], duration, settle=0, tags=["random", "random_ground"]))
+
+    for i in range(count_air):
+        x, y, z = rng.uniform(-2500, 2500), rng.uniform(-3500, 3500), rng.uniform(300, 1500)
+        car = Body(pos=(x, y, z), yaw=rand_yaw(), pitch=rng.uniform(-1.4, 1.4), roll=rng.uniform(-math.pi, math.pi),
+                   vel=(rng.uniform(-1000, 1000), rng.uniform(-1000, 1000), rng.uniform(-500, 800)),
+                   ang_vel=(rng.uniform(-4, 4), rng.uniform(-4, 4), rng.uniform(-4, 4)), boost=rng.uniform(20, 100))
+        d = rng.uniform(250, 700)
+        dx, dy, dz = rng.gauss(0, 1), rng.gauss(0, 1), rng.gauss(0, 0.5)
+        n = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
+        ball = Body(pos=(x + d * dx / n, y + d * dy / n, max(200.0, min(1800.0, z + d * dz / n))),
+                    vel=(rng.uniform(-800, 800), rng.uniform(-800, 800), rng.uniform(-300, 500)),
+                    ang_vel=(rng.uniform(-4, 4), rng.uniform(-4, 4), rng.uniform(-4, 4)))
+        out.append(Scenario(f"rand_air_{i:02d}", [car, _parked_car(1)], ball, [_random_script(rng, duration, air=True), []], duration, settle=0, tags=["random", "random_air"]))
+
+    for i in range(count_pair):
+        x, y = rng.uniform(-2500, 2500), rng.uniform(-3500, 3500)
+        yaw = rand_yaw()
+        gap = rng.uniform(500, 1500)
+        sa, sb = rng.uniform(800, 2200), rng.uniform(0, 1800)
+        yb = yaw + math.pi + rng.uniform(-1.2, 1.2)
+        ox, oy = rng.uniform(-150, 150), rng.uniform(-150, 150)
+        car_a = Body(pos=(x, y, CAR_REST_Z), yaw=yaw, vel=(sa * math.cos(yaw), sa * math.sin(yaw), 0.0), boost=rng.uniform(20, 100))
+        car_b = Body(pos=(x + gap * math.cos(yaw) + ox, y + gap * math.sin(yaw) + oy, CAR_REST_Z), yaw=yb, vel=(sb * math.cos(yb), sb * math.sin(yb), 0.0), boost=rng.uniform(20, 100))
+        ball = Body(pos=(x + 0.5 * gap * math.cos(yaw) + rng.uniform(-400, 400), y + 0.5 * gap * math.sin(yaw) + rng.uniform(-400, 400), BALL_REST_Z),
+                    vel=(rng.uniform(-400, 400), rng.uniform(-400, 400), 0.0))
+        out.append(Scenario(f"rand_pair_{i:02d}", [car_a, car_b], ball, [_random_script(rng, duration, air=False), _random_script(rng, duration, air=False)], duration, settle=0,
+                            tags=["random", "random_pair", "car_car"]))
+
+    for i in range(count_wall):
+        side = rng.choice([-1, 1])
+        y = rng.uniform(-3000, 3000)
+        yaw = (0.0 if side > 0 else math.pi) + rng.uniform(-0.7, 0.7)
+        speed = rng.uniform(600, 2000)
+        car = Body(pos=(side * rng.uniform(2800, 3500), y, CAR_REST_Z), yaw=yaw, vel=(speed * math.cos(yaw), speed * math.sin(yaw), 0.0), boost=rng.uniform(20, 100))
+        ball = Body(pos=(side * 3600.0, y + rng.uniform(-800, 800), rng.uniform(BALL_REST_Z, 900)), vel=(rng.uniform(-300, 300), rng.uniform(-600, 600), rng.uniform(-200, 400)))
+        out.append(Scenario(f"rand_wall_{i:02d}", [car, _parked_car(1)], ball, [_random_script(rng, duration, air=False), []], duration, settle=0, tags=["random", "random_wall"]))
+    return out
+
+
+def pitch_lock() -> list[Scenario]:
+    """Whether air pitch is locked right after a state set.
+
+    The simulator ignores air pitch while less than 0.3 s have passed since the last flip, and a state set (or a
+    kickoff reset) starts that time at 0. These check whether the game does the same: pitch from the first tick
+    in the air, after waiting in the air, and right after a jump from the ground; yaw as a control.
+    """
+    out = []
+    for axis in ("pitch", "yaw"):
+        out.append(_solo(f"pitchlock_air_now_{axis}", Body(pos=(0.0, -3000.0, 1200.0), yaw=math.pi / 2), [Segment(0, 72, {axis: 1})], 120, settle=0, tags=["air", "pitch_lock"]))
+    out.append(_solo("pitchlock_air_wait", Body(pos=(0.0, -3000.0, 1600.0), yaw=math.pi / 2), [Segment(60, 120, {"pitch": 1})], 150, settle=0, tags=["air", "pitch_lock"]))
+    out.append(_solo("pitchlock_jump_now", _origin_car(), [Segment(0, 6, {"jump": 1}), Segment(6, 60, {"pitch": 1})], 120, settle=0, tags=["jump", "pitch_lock"]))
+    return out
+
+
 def all_scenarios() -> list[Scenario]:
-    scenarios = driving() + jumping() + ball() + bumps_and_demos() + air_touches() + ball_bounces() + suspension() + air_bumps() + flip_resets()
+    scenarios = driving() + jumping() + ball() + bumps_and_demos() + air_touches() + ball_bounces() + suspension() + air_bumps() + flip_resets() + random_play() + pitch_lock()
     names = [s.name for s in scenarios]
     assert len(names) == len(set(names)), "duplicate scenario names"
     return scenarios

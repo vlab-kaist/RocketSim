@@ -217,7 +217,7 @@ __init__(self
 	has_flipped: bool = False,
 	flip_rel_torque: RocketSim.Vec = RocketSim.Vec(),
 	jump_time: float = 0.0,
-	flip_time: float = 0.0,
+	flip_time: float = 1.0,
 	is_flipping: bool = False,
 	is_jumping: bool = False,
 	air_time: float = 0.0,

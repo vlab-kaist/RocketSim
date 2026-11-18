@@ -37,8 +37,9 @@ uv venv --python 3.12 && uv pip install --prerelease allow -e . .. pytest
 
 1. 게임 소유 계정에서 `RLBotServer`를 실행한다.
 2. 매치를 시작한다. 서버가 설정 파일을 직접 읽으므로 그 계정이 읽을 수 있는 경로여야 한다.
+   v2 서버에서는 vlab 계정이 이 저장소를 읽지 못하므로, 공유 디렉터리에 복사해 둔 설정을 넘긴다.
    ```sh
-   python rlbot/start_match.py
+   python rlbot/start_match.py /mnt/hdd0/rlbot-shared/match.toml
    ```
 3. 녹화한다. 인자는 시나리오 이름이나 태그의 부분 문자열이고, 없으면 전체다.
    ```sh
@@ -49,6 +50,8 @@ uv venv --python 3.12 && uv pip install --prerelease allow -e . .. pytest
 
 매치는 봇 프로세스가 없는 차 2대로 구성된다. state setting이 켜져 있으면 서버가
 script의 입력을 모든 차에 대해 받아 주므로, 녹화 script 하나가 두 차를 모두 조종한다.
+`match.toml`은 카운트다운과 골 후 리셋을 꺼 둔다. 실제 킥오프를 봐야 할 때는
+`match_kickoff.toml`로 매치를 시작하고 `rlbot/kickoff_pitch.py`처럼 골을 넣어 킥오프를 만든다.
 
 ## 비교
 
