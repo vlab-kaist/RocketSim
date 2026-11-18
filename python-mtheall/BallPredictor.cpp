@@ -327,7 +327,7 @@ PyObject *BallPredictor::GetBallPrediction (BallPredictor *self_, PyObject *args
 		return nullptr;
 
 	self_->tracker.numPredTicks = numStates * tickInterval;
-	self_->tracker.UpdatePredManual (PyCast<BallState> (ballState)->state, ticksSinceLastUpdate);
+	self_->tracker.UpdatePredManual (BallState::ToBallState (PyCast<BallState> (ballState)), ticksSinceLastUpdate);
 
 	for (unsigned i = 0; i < numStates; ++i)
 	{
