@@ -72,7 +72,7 @@ Car* Arena::AddCar(Team team, const CarConfig& config) {
 	_AddCarFromPtr(car);
 
 	car->_BulletSetup(gameMode, &_bulletWorld, _mutatorConfig);
-	car->Respawn(gameMode, -1, _mutatorConfig.carSpawnBoostAmount);
+	car->Respawn(gameMode, _NextRespawnSeed(), _mutatorConfig.carSpawnBoostAmount);
 
 	return car;
 }
@@ -712,12 +712,22 @@ void Arena::_BtCallback_OnCarWorldCollision(Car* car, btCollisionObject* world, 
 	manifoldPoint.m_combinedRestitution = _mutatorConfig.carWorldRestitution;
 }
 
+int Arena::_NextRespawnSeed() {
+	// (xorshift32; seeds must not be -1, which means the global random engine)
+	_respawnRandState ^= _respawnRandState << 13;
+	_respawnRandState ^= _respawnRandState >> 17;
+	_respawnRandState ^= _respawnRandState << 5;
+	return (int)(_respawnRandState & 0x7fffffff);
+}
+
 Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mutatorConfig(gameMode), _config(config) {
 
 	// Tickrate must be from 15 to 120tps
 	assert(tickRate >= 15 && tickRate <= 120);
 
 	RocketSim::AssertInitialized("Cannot create Arena, ");
+
+	_respawnRandState = (uint32_t)Math::GetRandEngine()() | 1; // (xorshift needs a nonzero state)
 
 	this->gameMode = gameMode;
 	this->tickTime = 1 / tickRate;
@@ -1012,6 +1022,8 @@ Arena* Arena::Clone(bool copyCallbacks) {
 			// The exact body state (the state structs are in UU, which does not convert back exactly)
 			dst->setWorldTransform(src->getWorldTransform());
 			dst->setCenterOfMassTransform(src->getCenterOfMassTransform());
+			// (Only updated when the body moves, so not always the one of the current transform)
+			dst->m_invInertiaTensorWorld = src->m_invInertiaTensorWorld;
 			dst->setLinearVelocity(src->getLinearVelocity());
 			dst->setAngularVelocity(src->getAngularVelocity());
 			// The previous tick's transform, which widens the bodies' bounds
@@ -1059,6 +1071,7 @@ Arena* Arena::Clone(bool copyCallbacks) {
 
 	newArena->tickCount = this->tickCount;
 	newArena->_lastCarID = this->_lastCarID;
+	newArena->_respawnRandState = this->_respawnRandState;
 
 	return newArena;
 }
@@ -1071,14 +1084,15 @@ namespace {
 		out.angularVelocity = rb.getAngularVelocity();
 		out.interpolationLinearVelocity = rb.getInterpolationLinearVelocity();
 		out.interpolationAngularVelocity = rb.getInterpolationAngularVelocity();
+		out.invInertiaTensorWorld = rb.m_invInertiaTensorWorld;
 		out.activationState = rb.getActivationState();
 		out.collisionFlags = rb.getCollisionFlags();
 		out.deactivationTime = rb.getDeactivationTime();
 	}
 
 	void LoadBody(btRigidBody& rb, const ArenaSnapshot::Body& in) {
-		// (Also updates the world inertia tensor for the transform)
 		rb.setCenterOfMassTransform(in.worldTransform);
+		rb.m_invInertiaTensorWorld = in.invInertiaTensorWorld;
 		rb.setInterpolationWorldTransform(in.interpolationWorldTransform);
 		rb.setLinearVelocity(in.linearVelocity);
 		rb.setAngularVelocity(in.angularVelocity);
@@ -1092,18 +1106,38 @@ namespace {
 
 void Arena::SaveSnapshot(ArenaSnapshot& out) const {
 	out.arena = this;
+	out.gameMode = gameMode;
+	out.numWorldBodies = (int)_worldCollisionRBs.size();
 	out.tickCount = tickCount;
+	out.respawnRandState = _respawnRandState;
 
 	out.ballState = ball->_internalState;
 	out.ballVelocityImpulseCache = ball->_velocityImpulseCache;
 	out.ballGroundStickApplied = ball->_groundStickApplied;
 	SaveBody(ball->_rigidBody, out.ballBody);
 
+	// Body index of a body under a wheel (see ArenaSnapshot)
+	auto bodyIndex = [&](const void* obj) -> int {
+		if (!obj)
+			return -1;
+		for (size_t i = 0; i < _worldCollisionRBs.size(); i++)
+			if (obj == _worldCollisionRBs[i])
+				return (int)i;
+		if (obj == &ball->_rigidBody)
+			return out.numWorldBodies;
+		for (size_t i = 0; i < _cars.size(); i++)
+			if (obj == &_cars[i]->_rigidBody)
+				return out.numWorldBodies + 1 + (int)i;
+		RS_ERR_CLOSE("Arena::SaveSnapshot(): a wheel is on a body that is not in the arena");
+		return -1;
+	};
+
 	out.cars.resize(_cars.size());
 	for (size_t i = 0; i < _cars.size(); i++) {
 		const Car* car = _cars[i];
 		ArenaSnapshot::CarData& data = out.cars[i];
 		data.id = car->id;
+		data.team = car->team;
 		data.state = car->_internalState;
 		data.controls = car->controls;
 		data.velocityImpulseCache = car->_velocityImpulseCache;
@@ -1111,23 +1145,28 @@ void Arena::SaveSnapshot(ArenaSnapshot& out) const {
 		data.demoerID = car->_demoerID;
 		data.realThrottle = car->_realThrottle;
 		SaveBody(car->_rigidBody, data.body);
-		for (int w = 0; w < 4; w++)
+		for (int w = 0; w < 4; w++) {
 			data.wheels[w] = car->_bulletVehicle.m_wheelInfo[w];
+			data.wheelGround[w] = bodyIndex(data.wheels[w].m_raycastInfo.m_groundObject);
+		}
 	}
 
 	out.boostPads.resize(_boostPads.size());
 	for (size_t i = 0; i < _boostPads.size(); i++)
 		out.boostPads[i] = _boostPads[i]->_internalState;
 
-	out.dynProxies.clear();
-	out.dynCells.clear();
+	out.dynProxies.resize(0);
+	int numCells = 0;
 	auto* bp = dynamic_cast<const btRSBroadphase*>(_bulletWorld.getBroadphase());
 	if (bp) {
-		std::vector<const btCollisionObject*> bodies = { &ball->_rigidBody };
-		for (const Car* car : _cars)
-			bodies.push_back(&car->_rigidBody);
-		for (const btCollisionObject* obj : bodies) {
-			auto* proxy = (btRSBroadphaseProxy*)obj->getBroadphaseHandle();
+		// The moving bodies: the ball, then the cars
+		auto movingProxy = [&](size_t i) {
+			const btCollisionObject* obj = i == 0 ? (const btCollisionObject*)&ball->_rigidBody : &_cars[i - 1]->_rigidBody;
+			return (const btRSBroadphaseProxy*)obj->getBroadphaseHandle();
+		};
+		size_t numMoving = 1 + _cars.size();
+		for (size_t m = 0; m < numMoving; m++) {
+			auto* proxy = movingProxy(m);
 			out.dynProxies.push_back({ proxy->m_aabbMin, proxy->m_aabbMax, proxy->cellIdx, proxy->iIdx, proxy->jIdx, proxy->kIdx });
 			// The cells a moving proxy is listed in
 			for (int ci = btMax(proxy->iIdx - 1, 0); ci <= btMin(proxy->iIdx + 1, bp->cellsX - 1); ci++)
@@ -1135,24 +1174,70 @@ void Arena::SaveSnapshot(ArenaSnapshot& out) const {
 					for (int ck = btMax(proxy->kIdx - 1, 0); ck <= btMin(proxy->kIdx + 1, bp->cellsZ - 1); ck++) {
 						int c = ci * bp->cellsY * bp->cellsZ + cj * bp->cellsZ + ck;
 						bool listed = false;
-						for (auto& cell : out.dynCells)
-							listed |= cell.first == c;
-						if (!listed)
-							out.dynCells.emplace_back(c, bp->cells[c].dynHandles);
+						for (int k = 0; k < numCells; k++)
+							listed |= out.dynCells[k].first == c;
+						if (listed)
+							continue;
+						// (Reuses the lists of an earlier save)
+						if (numCells == (int)out.dynCells.size())
+							out.dynCells.emplace_back();
+						auto& [cell, list] = out.dynCells[numCells++];
+						cell = c;
+						list.resize(0);
+						for (auto* handle : bp->cells[c].dynHandles) {
+							int idx = -1;
+							for (size_t k = 0; k < numMoving; k++)
+								if (handle == movingProxy(k))
+									idx = (int)k;
+							if (idx < 0)
+								RS_ERR_CLOSE("Arena::SaveSnapshot(): a broadphase cell lists a body that is not in the arena");
+							list.push_back(idx);
+						}
 					}
 		}
 	}
+	out.dynCells.resize(numCells);
 }
 
 void Arena::LoadSnapshot(const ArenaSnapshot& in) {
-	if (in.arena != this)
-		RS_ERR_CLOSE("Arena::LoadSnapshot(): the snapshot was saved from another arena");
+	if (in.gameMode != gameMode)
+		RS_ERR_CLOSE("Arena::LoadSnapshot(): the snapshot is from another game mode");
 	if (in.cars.size() != _cars.size())
 		RS_ERR_CLOSE("Arena::LoadSnapshot(): the snapshot has " << in.cars.size() << " cars, the arena has " << _cars.size());
+	if (in.numWorldBodies != (int)_worldCollisionRBs.size() || in.boostPads.size() != _boostPads.size())
+		RS_ERR_CLOSE("Arena::LoadSnapshot(): the snapshot's arena has a different layout");
+	for (size_t i = 0; i < _cars.size(); i++)
+		if (in.cars[i].team != _cars[i]->team)
+			RS_ERR_CLOSE("Arena::LoadSnapshot(): car " << i << " is on another team in the snapshot");
+	bool sameIDs = true;
+	for (size_t i = 0; i < _cars.size(); i++)
+		sameIDs &= in.cars[i].id == _cars[i]->id;
+
+	// Car IDs of the source arena to this arena's (by index). IDs of cars that were no longer in the source
+	// arena are kept when the cars have the same IDs (as when loading into the source arena), else become 0 (no car).
+	auto carID = [&](uint32_t id) -> uint32_t {
+		if (sameIDs || id == 0)
+			return id;
+		for (size_t i = 0; i < in.cars.size(); i++)
+			if (in.cars[i].id == id)
+				return _cars[i]->id;
+		return 0;
+	};
+	auto body = [&](int idx) -> btCollisionObject* {
+		if (idx < 0)
+			return NULL;
+		if (idx < in.numWorldBodies)
+			return _worldCollisionRBs[idx];
+		if (idx == in.numWorldBodies)
+			return &ball->_rigidBody;
+		return &_cars[idx - in.numWorldBodies - 1]->_rigidBody;
+	};
 
 	tickCount = in.tickCount;
+	_respawnRandState = in.respawnRandState;
 
 	ball->_internalState = in.ballState;
+	ball->_internalState.lastHitCarID = carID(in.ballState.lastHitCarID);
 	ball->_velocityImpulseCache = in.ballVelocityImpulseCache;
 	ball->_groundStickApplied = in.ballGroundStickApplied;
 	LoadBody(ball->_rigidBody, in.ballBody);
@@ -1160,40 +1245,45 @@ void Arena::LoadSnapshot(const ArenaSnapshot& in) {
 	for (size_t i = 0; i < _cars.size(); i++) {
 		Car* car = _cars[i];
 		const ArenaSnapshot::CarData& data = in.cars[i];
-		if (data.id != car->id)
-			RS_ERR_CLOSE("Arena::LoadSnapshot(): the snapshot's cars are not this arena's cars");
 		car->_internalState = data.state;
+		car->_internalState.carContact.otherCarID = carID(data.state.carContact.otherCarID);
 		car->controls = data.controls;
 		car->_velocityImpulseCache = data.velocityImpulseCache;
 		car->_demoTick = data.demoTick;
-		car->_demoerID = data.demoerID;
+		car->_demoerID = carID(data.demoerID);
 		car->_realThrottle = data.realThrottle;
 		LoadBody(car->_rigidBody, data.body);
-		for (int w = 0; w < 4; w++)
+		for (int w = 0; w < 4; w++) {
 			car->_bulletVehicle.m_wheelInfo[w] = data.wheels[w];
+			car->_bulletVehicle.m_wheelInfo[w].m_raycastInfo.m_groundObject = body(data.wheelGround[w]);
+		}
 	}
 
-	for (size_t i = 0; i < _boostPads.size() && i < in.boostPads.size(); i++)
+	for (size_t i = 0; i < _boostPads.size(); i++) {
 		_boostPads[i]->_internalState = in.boostPads[i];
+		_boostPads[i]->_internalState.prevLockedCarID = carID(in.boostPads[i].prevLockedCarID);
+	}
 
 	auto* bp = dynamic_cast<btRSBroadphase*>(_bulletWorld.getBroadphase());
 	if (bp && !in.dynProxies.empty()) {
-		std::vector<btCollisionObject*> bodies = { &ball->_rigidBody };
-		for (Car* car : _cars)
-			bodies.push_back(&car->_rigidBody);
+		auto movingProxy = [&](size_t i) {
+			btCollisionObject* obj = i == 0 ? (btCollisionObject*)&ball->_rigidBody : &_cars[i - 1]->_rigidBody;
+			return (btRSBroadphaseProxy*)obj->getBroadphaseHandle();
+		};
+		size_t numMoving = 1 + _cars.size();
 
 		// Take the moving proxies out of the cells they are in now...
-		for (btCollisionObject* obj : bodies) {
-			auto* proxy = (btRSBroadphaseProxy*)obj->getBroadphaseHandle();
+		for (size_t m = 0; m < numMoving; m++) {
+			auto* proxy = movingProxy(m);
 			for (int ci = btMax(proxy->iIdx - 1, 0); ci <= btMin(proxy->iIdx + 1, bp->cellsX - 1); ci++)
 				for (int cj = btMax(proxy->jIdx - 1, 0); cj <= btMin(proxy->jIdx + 1, bp->cellsY - 1); cj++)
 					for (int ck = btMax(proxy->kIdx - 1, 0); ck <= btMin(proxy->kIdx + 1, bp->cellsZ - 1); ck++)
 						bp->cells[ci * bp->cellsY * bp->cellsZ + cj * bp->cellsZ + ck].dynHandles.clear();
 		}
 		// ...and put them back as they were
-		for (size_t i = 0; i < bodies.size() && i < in.dynProxies.size(); i++) {
-			auto* proxy = (btRSBroadphaseProxy*)bodies[i]->getBroadphaseHandle();
-			const auto& saved = in.dynProxies[i];
+		for (size_t m = 0; m < numMoving && m < in.dynProxies.size(); m++) {
+			auto* proxy = movingProxy(m);
+			const auto& saved = in.dynProxies[m];
 			proxy->m_aabbMin = saved.aabbMin;
 			proxy->m_aabbMax = saved.aabbMax;
 			proxy->cellIdx = saved.cellIdx;
@@ -1201,8 +1291,11 @@ void Arena::LoadSnapshot(const ArenaSnapshot& in) {
 			proxy->jIdx = saved.jIdx;
 			proxy->kIdx = saved.kIdx;
 		}
-		for (auto& [c, handles] : in.dynCells)
-			bp->cells[c].dynHandles = handles;
+		for (auto& [c, list] : in.dynCells) {
+			auto& handles = bp->cells[c].dynHandles;
+			for (int idx : list)
+				handles.push_back(movingProxy(idx));
+		}
 	}
 }
 
@@ -1257,7 +1350,7 @@ void Arena::Step(int ticksToSimulate) {
 
 		{ RS_PROF(1, "car pretick");
 		for (Car* car : _cars)
-			car->_PreTickUpdate(gameMode, tickTime, _mutatorConfig);
+			car->_PreTickUpdate(gameMode, tickTime, _mutatorConfig, this);
 		}
 
 		if (hasArenaStuff && !ballOnly) {

@@ -631,13 +631,16 @@ Returns previous (callback, data))"},
         .ml_flags = METH_VARARGS,
         .ml_doc   = R"(save_snapshot(self, snapshot: object = None) -> object
 Saves everything the arena's next ticks depend on. Pass a snapshot from an earlier call to reuse its memory.
-load_snapshot() then makes this arena (with the same cars) continue exactly as it did from here.
+load_snapshot() then makes this arena (with the same cars), or another arena with the same layout (same game mode and
+mutators, same number of cars added in the same order with the same teams and configs), continue exactly as this one
+did from here.
 Only the simulation is saved: Python-side stats (goals, demos, ...) and callbacks are not.)"},
     {.ml_name     = "load_snapshot",
         .ml_meth  = (PyCFunction)&Arena::LoadSnapshot,
         .ml_flags = METH_VARARGS,
         .ml_doc   = R"(load_snapshot(self, snapshot: object)
-Goes back to a snapshot saved from this arena)"},
+Loads a snapshot saved from this arena or from another arena with the same layout (cars are matched by index).
+Only reads the snapshot, so one snapshot can be loaded into many arenas)"},
     {.ml_name = "stop", .ml_meth = (PyCFunction)&Arena::Stop, .ml_flags = METH_NOARGS, .ml_doc = R"(stop(self)
 This can be called from within a callback to stop simulation early)"},
     {.ml_name     = "multi_step",
@@ -2657,21 +2660,24 @@ PyObject *Arena::LoadSnapshot (Arena *self_, PyObject *args_) noexcept
 	if (!snapshot)
 		return nullptr;
 
-	if (snapshot->arena != self_->arena.get ())
+	// (The same checks as Arena::LoadSnapshot(), which would end the process)
+	auto const &arena = *self_->arena;
+	if (snapshot->gameMode != arena.gameMode)
 	{
-		PyErr_SetString (PyExc_ValueError, "The snapshot was saved from another arena");
+		PyErr_SetString (PyExc_ValueError, "The snapshot is from another game mode");
 		return nullptr;
 	}
-	if (snapshot->cars.size () != self_->arena->_cars.size ())
+	if (snapshot->cars.size () != arena._cars.size () || snapshot->numWorldBodies != (int)arena._worldCollisionRBs.size () ||
+	    snapshot->boostPads.size () != arena._boostPads.size ())
 	{
-		PyErr_SetString (PyExc_ValueError, "The snapshot is not from this arena (different cars)");
+		PyErr_SetString (PyExc_ValueError, "The snapshot is from an arena with another layout (different cars or field)");
 		return nullptr;
 	}
 	for (std::size_t i = 0; i < snapshot->cars.size (); ++i)
 	{
-		if (snapshot->cars[i].id != self_->arena->_cars[i]->id)
+		if (snapshot->cars[i].team != arena._cars[i]->team)
 		{
-			PyErr_SetString (PyExc_ValueError, "The snapshot is not from this arena (different cars)");
+			PyErr_SetString (PyExc_ValueError, "The snapshot is from an arena with another layout (cars on other teams)");
 			return nullptr;
 		}
 	}

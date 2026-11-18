@@ -27,19 +27,26 @@ using BoostPickupEventFn = void(*)(class Arena* arena, Car *car, BoostPad *boost
 using CarBumpEventFn     = void(*)(class Arena* arena, Car* bumper, Car* victim, bool isDemo, void* userInfo);
 using GoalScoreEventFn   = void(*)(class Arena* arena, Team scoringTeam, void* userInfo);
 
-// Everything an arena's next ticks depend on, to go back to with Arena::LoadSnapshot()
-// (the same arena, with the same cars). Restoring is exact: the arena then continues bit for bit as it did
-// from the snapshot. Unlike Arena::Clone(), saving and loading allocate nothing after the first save.
+// Everything an arena's next ticks depend on, to go back to with Arena::LoadSnapshot().
+// It can be loaded into the arena it was saved from (with the same cars), or into another arena with the same
+// layout: the same game mode and mutator config, and the same number of cars added in the same order, with the
+// same teams and configs (cars are matched by index; their IDs are translated). Restoring is exact: the arena
+// then continues bit for bit as the source did from the snapshot. Unlike Arena::Clone(), saving and loading
+// allocate nothing after the first save, and loading only reads the snapshot (one snapshot can be loaded into
+// many arenas at once, from different threads).
 struct ArenaSnapshot {
 	struct Body {
 		btTransform worldTransform, interpolationWorldTransform;
 		btVector3 linearVelocity, angularVelocity, interpolationLinearVelocity, interpolationAngularVelocity;
+		// (Not always the one of the current transform: it's only updated when the body moves)
+		btMatrix3x3 invInertiaTensorWorld;
 		int activationState, collisionFlags;
 		float deactivationTime;
 	};
 
 	struct CarData {
 		uint32_t id;
+		Team team;
 		CarState state;
 		CarControls controls;
 		Vec velocityImpulseCache;
@@ -48,6 +55,7 @@ struct ArenaSnapshot {
 		float realThrottle;
 		Body body;
 		btWheelInfoRL wheels[4];
+		int wheelGround[4]; // The body under each wheel, as a body index (see below), or -1
 	};
 
 	struct DynProxy {
@@ -55,8 +63,13 @@ struct ArenaSnapshot {
 		int cellIdx, iIdx, jIdx, kIdx;
 	};
 
-	const class Arena* arena = NULL; // The arena it was saved from, the only one it can be loaded into
+	// Bodies are referred to by index: the arena's world collision bodies first, then the ball, then the cars
+	// (so the snapshot holds no pointers into the arena it was saved from)
+	const class Arena* arena = NULL; // The arena it was saved from (for information only)
+	GameMode gameMode;
+	int numWorldBodies = 0;
 	uint64_t tickCount = 0;
+	uint32_t respawnRandState;
 	BallState ballState;
 	Vec ballVelocityImpulseCache;
 	bool ballGroundStickApplied;
@@ -65,9 +78,10 @@ struct ArenaSnapshot {
 	std::vector<BoostPadState> boostPads;
 
 	// Broadphase: the cells and bounds of the moving bodies (ball, then cars), and the order of the
-	// moving bodies in each of their cells (it decides the order contacts are handled in)
+	// moving bodies in each of their cells (it decides the order contacts are handled in), as indices
+	// into the moving bodies (0 is the ball, 1 + i is car i)
 	std::vector<DynProxy> dynProxies;
-	std::vector<std::pair<int, std::vector<::btRSBroadphaseProxy*>>> dynCells;
+	std::vector<std::pair<int, std::vector<int>>> dynCells;
 };
 
 // The container for all game simulation
@@ -78,6 +92,10 @@ public:
 	GameMode gameMode;
 
 	uint32_t _lastCarID = 0;
+	// Picks the respawn location of each car spawn (cars added and respawning after demos). Part of the arena's
+	// state (snapshots and clones), so a continued arena respawns cars in the same places. Seeded randomly.
+	uint32_t _respawnRandState;
+	int _NextRespawnSeed();
 	// In the order the cars were added: every per-car pass (and so the simulation) follows this order.
 	// (An unordered_set of pointers made the order, and the results, depend on memory addresses.)
 	std::vector<Car*> _cars;
@@ -185,7 +203,8 @@ public:
 	// Get a deep copy of the arena
 	Arena* Clone(bool copyCallbacks);
 
-	// Save everything the next ticks depend on, and go back to it later (into this same arena, with the same cars)
+	// Save everything the next ticks depend on, and go back to it later: into this same arena (with the same cars),
+	// or into another arena with the same layout (see ArenaSnapshot)
 	void SaveSnapshot(ArenaSnapshot& out) const;
 	void LoadSnapshot(const ArenaSnapshot& in);
 

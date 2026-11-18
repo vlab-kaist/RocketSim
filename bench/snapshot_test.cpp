@@ -1,7 +1,10 @@
 // Checks that Arena::LoadSnapshot() makes an arena continue exactly as it did from the snapshot, after it went on
-// differently in between, at many points of random 1v1-3v3 games. Also times saving and loading.
+// differently in between, at many points of random 1v1-3v3 games. Also checks loading the snapshot into other
+// arenas with the same layout (with other car IDs and another history), several at once from different threads.
+// Also times saving and loading.
 //   snapshot_test <meshes> [after_ticks=600]
 #include <chrono>
+#include <thread>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -33,13 +36,22 @@ static Frame capture(Arena* a) {
 		f.v.push_back(s.boost); f.v.push_back(s.isDemoed);
 	}
 	for (BoostPad* p : a->GetBoostPads()) f.v.push_back(p->GetState().isActive);
+	// Car IDs as car indices, so they compare between arenas
+	auto index = [&](uint32_t id) {
+		int i = 0;
+		for (Car* c : a->GetCars()) { if (c->id == id) return (float)i; i++; }
+		return id ? -2.f : -1.f;
+	};
+	f.v.push_back(index(b.lastHitCarID));
+	for (Car* c : a->GetCars()) f.v.push_back(index(c->GetState().carContact.otherCarID));
+	for (BoostPad* p : a->GetBoostPads()) f.v.push_back(index(p->GetState().prevLockedCarID));
 	return f;
 }
 
 int main(int argc, char** argv) {
 	int after = argc > 2 ? atoi(argv[2]) : 600;
 	RocketSim::Init(argv[1], true);
-	int failures = 0, total = 0;
+	int failures = 0, total = 0, idFieldsSet = 0;
 	double saveTime = 0, loadTime = 0; int timed = 0;
 	for (int perTeam = 1; perTeam <= 3; perTeam++) {
 		for (int warm : { 0, 8, 40, 200, 333, 777, 1600, 3000 }) {
@@ -48,8 +60,20 @@ int main(int argc, char** argv) {
 				for (int i = 0; i < perTeam; i++)
 					a->AddCar(t ? Team::ORANGE : Team::BLUE);
 			a->ResetToRandomKickoff(7);
-			for (int i = 0; i < warm; i += 8) { setControls(a, 1000 + i); a->Step(8); }
+			// Drive at the ball for the kickoff (touches and bumps), then random
+			for (int i = 0; i < warm; i += 8) {
+				setControls(a, 1000 + i);
+				if (i < 320)
+					for (Car* c : a->GetCars()) { CarControls cc; cc.throttle = 1; cc.boost = true; cc.jump = i >= 200 && i < 216; c->controls = cc; }
+				a->Step(8);
+			}
 
+			{ // How many of the ID fields the snapshot sees set (for the cross-arena checks to mean something)
+				int set = a->ball->GetState().lastHitCarID != 0;
+				for (Car* c : a->GetCars()) set += c->GetState().carContact.otherCarID != 0;
+				for (BoostPad* p : a->GetBoostPads()) set += p->GetState().prevLockedCarID != 0;
+				idFieldsSet += set;
+			}
 			ArenaSnapshot snap;
 			auto t0 = std::chrono::steady_clock::now();
 			a->SaveSnapshot(snap);
@@ -76,9 +100,57 @@ int main(int argc, char** argv) {
 				failures++;
 				std::printf("%dv%d snapshot after %d ticks: differs after %d ticks\n", perTeam, perTeam, warm, firstDiff);
 			}
+
+			// Other arenas with the same layout: other car IDs (a car added and removed first) and another game
+			// before the load. Loaded and stepped from different threads at once.
+			const int numOthers = 4;
+			std::vector<Arena*> others;
+			for (int k = 0; k < numOthers; k++) {
+				Arena* b = Arena::Create(GameMode::SOCCAR);
+				for (int extra = 0; extra <= k; extra++)
+					b->RemoveCar(b->AddCar(Team::BLUE));
+				for (int t = 0; t < 2; t++)
+					for (int i = 0; i < perTeam; i++)
+						b->AddCar(t ? Team::ORANGE : Team::BLUE);
+				b->ResetToRandomKickoff(100 + k);
+				for (int i = 0; i < 40 * k; i += 8) { setControls(b, 7000 + i); b->Step(8); }
+				others.push_back(b);
+			}
+			std::vector<int> otherDiff(numOthers, -1);
+			std::vector<std::thread> threads;
+			for (int k = 0; k < numOthers; k++)
+				threads.emplace_back([&, k]() {
+					Arena* b = others[k];
+					b->LoadSnapshot(snap);
+					for (int i = 0; i < after && otherDiff[k] < 0; i++) {
+						if (i % 8 == 0) {
+							// (Controls from the same sequence, without the shared generator)
+							uint32_t s = 5000 + i;
+							for (Car* c : b->GetCars()) {
+								auto ax = [&]() { s ^= s << 13; s ^= s >> 17; s ^= s << 5; return (float)(s % 3) - 1; };
+								CarControls cc;
+								cc.throttle = ax(); cc.steer = ax(); cc.pitch = ax(); cc.yaw = ax(); cc.roll = ax();
+								cc.jump = ax() > 0; cc.boost = ax() > 0; cc.handbrake = ax() > 0.5f;
+								c->controls = cc;
+							}
+						}
+						b->Step(1);
+						if (capture(b).v != ref[i].v) otherDiff[k] = i + 1;
+					}
+				});
+			for (auto& t : threads) t.join();
+			for (int k = 0; k < numOthers; k++) {
+				total++;
+				if (otherDiff[k] >= 0) {
+					failures++;
+					std::printf("%dv%d snapshot after %d ticks, loaded into another arena (%d): differs after %d ticks\n", perTeam, perTeam, warm, k, otherDiff[k]);
+				}
+				delete others[k];
+			}
 			delete a;
 		}
 	}
+	std::printf("(car ID fields set at the snapshots: %d)\n", idFieldsSet);
 	std::printf("%d/%d snapshots match; save %.2f us, load %.2f us\n", total - failures, total, saveTime / timed * 1e6, loadTime / timed * 1e6);
 	return failures != 0;
 }

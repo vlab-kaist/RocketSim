@@ -4,6 +4,7 @@
 
 #include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btDynamicsWorld.h"
 #include "../CollisionMasks.h"
+#include "../Arena/Arena.h"
 
 RS_NS_START
 
@@ -110,7 +111,7 @@ void Car::_ApplyFlipZDamp() {
 		_rigidBody.m_linearVelocity.z() *= 1 - FLIP_Z_DAMP_120;
 }
 
-void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig) {
+void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig, Arena* arena) {
 	using namespace RLConst;
 
 #ifndef RS_MAX_SPEED
@@ -124,7 +125,7 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 		if (_internalState.isDemoed) {
 			_internalState.demoRespawnTimer = RS_MAX(_internalState.demoRespawnTimer - tickTime, 0);
 			if (_internalState.demoRespawnTimer == 0)
-				Respawn(gameMode, -1, mutatorConfig.carSpawnBoostAmount);
+				Respawn(gameMode, arena->_NextRespawnSeed(), mutatorConfig.carSpawnBoostAmount);
 
 			// Disable rigidbody simulation
 			_rigidBody.m_activationState1 = DISABLE_SIMULATION;
