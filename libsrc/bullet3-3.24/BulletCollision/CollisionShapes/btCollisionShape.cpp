@@ -52,7 +52,7 @@ void btCollisionShape::getAabb(const btTransform& t, btVector3& aabbMin, btVecto
 			// Don't need to compare the last row of the basis
 	};
 
-	if (!fnFastCompareTransforms(t, m_aabbCacheTrans) || !m_aabbCached) {
+	if (!m_aabbCached || !fnFastCompareTransforms(t, m_aabbCacheTrans)) {
 		switch (m_shapeType) {
 		case BOX_SHAPE_PROXYTYPE:
 			((btBoxShape*)this)->getAabb(t, aabbMin, aabbMax);

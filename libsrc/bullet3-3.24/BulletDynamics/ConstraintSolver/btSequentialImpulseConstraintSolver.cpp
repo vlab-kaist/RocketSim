@@ -1173,9 +1173,8 @@ void btSequentialImpulseConstraintSolver::convertContactSpecial(btCollisionObjec
 	normal = normal.safeNormalized();
 
 	// Create a temporary manifold for this collision
-	btManifoldPoint specialTempManifold = {};
-	specialTempManifold.m_distance1 = distance;
-	specialTempManifold.m_normalWorldOnB = normal;
+	// (This constructor initializes every member; the default one leaves some uninitialized)
+	btManifoldPoint specialTempManifold(btVector3(0, 0, 0), btVector3(0, 0, 0), normal, distance);
 	specialTempManifold.m_combinedFriction = specialResolveInfo.m_friction;
 	specialTempManifold.m_combinedRestitution = specialResolveInfo.m_restitution;
 	
