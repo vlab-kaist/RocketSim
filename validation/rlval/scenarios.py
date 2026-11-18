@@ -597,8 +597,25 @@ def pitch_lock() -> list[Scenario]:
     return out
 
 
+def roof_contacts() -> list[Scenario]:
+    """The car body (not the wheels) on the floor: upside down, dropped, sliding and spinning on the roof,
+    and landing on its side. Isolates body-floor contact (bounce, friction, penetration recovery)."""
+    out = []
+    down = math.pi
+    for h in (0.0, 30.0, 120.0):
+        out.append(_solo(f"roof_drop_h{int(h)}", Body(pos=(0.0, -3000.0, 40.0 + h), yaw=math.pi / 2, roll=down), [], 180, settle=0, tags=["roof"]))
+    for v in (300.0, 1000.0):
+        out.append(_solo(f"roof_slide_v{int(v)}", Body(pos=(0.0, -3000.0, 40.0), yaw=math.pi / 2, roll=down, vel=(0.0, v, 0.0)), [], 240, settle=0, tags=["roof"]))
+        out.append(_solo(f"roof_slide_side_v{int(v)}", Body(pos=(0.0, -3000.0, 40.0), yaw=math.pi / 2, roll=down, vel=(v, 0.0, 0.0)), [], 240, settle=0, tags=["roof"]))
+    out.append(_solo("roof_spin", Body(pos=(0.0, -3000.0, 40.0), yaw=math.pi / 2, roll=down, ang_vel=(0.0, 0.0, 3.0)), [], 240, settle=0, tags=["roof"]))
+    out.append(_solo("roof_land_fast", Body(pos=(0.0, -3000.0, 200.0), yaw=math.pi / 2, roll=down, vel=(0.0, 500.0, -1000.0)), [], 300, settle=0, tags=["roof"]))
+    out.append(_solo("side_land", Body(pos=(0.0, -3000.0, 150.0), yaw=math.pi / 2, roll=math.pi / 2, vel=(0.0, 300.0, -500.0)), [], 300, settle=0, tags=["roof"]))
+    out.append(_solo("nose_land", Body(pos=(0.0, -3000.0, 150.0), yaw=math.pi / 2, pitch=-math.pi / 2 + 0.2, vel=(0.0, 300.0, -500.0)), [], 300, settle=0, tags=["roof"]))
+    return out
+
+
 def all_scenarios() -> list[Scenario]:
-    scenarios = driving() + jumping() + ball() + bumps_and_demos() + air_touches() + ball_bounces() + suspension() + air_bumps() + flip_resets() + random_play() + pitch_lock()
+    scenarios = driving() + jumping() + ball() + bumps_and_demos() + air_touches() + ball_bounces() + suspension() + air_bumps() + flip_resets() + random_play() + pitch_lock() + roof_contacts()
     names = [s.name for s in scenarios]
     assert len(names) == len(set(names)), "duplicate scenario names"
     return scenarios
