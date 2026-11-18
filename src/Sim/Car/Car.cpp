@@ -728,7 +728,9 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, i
 		float retain[3] = { 1 - fabsf(scaled[0]), 1 - fabsf(scaled[1]), 1 };
 
 		btVector3 torque = { 0, 0, 0 }, damping = { 0, 0, 0 };
-		btVector3 angVel = _rigidBody.m_angularVelocity;
+		// Damps the angular velocity the tick started with (as RocketSim v3 does), not one that already has the
+		// reactions from other cars' wheels under this car in it
+		btVector3 angVel = _tickStartState.angVel;
 		for (int i = 0; i < 3; i++) {
 			if (!inputs.IsZero())
 				torque += dirs[i] * (scaled[i] * torqueAmounts[i]);
