@@ -78,6 +78,7 @@ class btBroadphaseInterface;
 #include "btCollisionObject.h"
 #include "btCollisionDispatcher.h"
 #include "../BroadphaseCollision/btOverlappingPairCache.h"
+#include "../NarrowPhaseCollision/btPersistentManifold.h"
 #include "../../LinearMath/btAlignedObjectArray.h"
 
 ///CollisionWorld is interface and container for the collision detection
@@ -98,6 +99,12 @@ protected:
 	// instead of in the broadphase's pair cache (see performDiscreteCollisionDetection())
 	btAlignedObjectArray<btBroadphasePair> m_rsPairs;
 	void rsReleasePairs(btBroadphaseProxy* onlyProxy = NULL);
+
+	// RocketSim: merges a pair's fresh manifold (from this tick's collision detection) into the pair's kept contacts,
+	// and gives the fresh manifold the merged points for the solver
+	void rsMergeContacts(btPersistentManifold* fresh);
+	btAlignedObjectArray<btPersistentManifold*> m_rsFreshManifolds; // (Reused)
+	int rsFindContacts(const btCollisionObject* body0, const btCollisionObject* body1) const;
 	static class btRSBroadphase* _asRSBroadphase(btBroadphaseInterface* broadphase);
 
 	///m_forceUpdateAllAabbs can be set to false as an optimization to only update active object AABBs
@@ -128,6 +135,22 @@ public:
 	{
 		return m_broadphasePairCache;
 	}
+
+	// RocketSim: contact points kept across ticks, one manifold per pair of bodies, as the game's Bullet keeps a
+	// pair's manifold while the pair overlaps (RocketSim v3 does the same). Each tick, a pair's kept points are
+	// refreshed for the bodies' new transforms, then that tick's fresh points are merged in (a fresh point near a
+	// kept one replaces it and inherits its applied impulse, the rest are added, keeping at most 4), and the solver
+	// works on the merged points. Only with the btRSBroadphase path.
+	struct RSContacts {
+		btPersistentManifold manifold;
+		btPersistentManifold* solverManifold; // The fresh manifold that holds the merged points this tick, or NULL
+		bool seen; // The pair was in this tick's collision detection
+	};
+	btAlignedObjectArray<RSContacts> m_rsContacts;
+	// Forgets the kept contacts of a body (all of them if NULL), e.g. after it was moved by a state set
+	void rsClearContacts(const btCollisionObject* obj = NULL);
+	// Keeps the impulses the solver applied at the merged points (for warm starting the next tick)
+	void rsStoreSolvedContacts();
 
 	// RocketSim: the pairs found by the last collision detection, when it used the btRSBroadphase path
 	const btAlignedObjectArray<btBroadphasePair>& getRSPairs() const

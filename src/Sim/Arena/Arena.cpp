@@ -1069,6 +1069,27 @@ Arena* Arena::Clone(bool copyCallbacks) {
 	for (int i = 0; i < this->_boostPads.size(); i++)
 		newArena->_boostPads[i]->SetState(this->_boostPads[i]->GetState());
 
+	{ // Contacts kept across ticks, with the bodies remapped
+		std::unordered_map<const btCollisionObject*, btCollisionObject*> bodyMap;
+		for (size_t i = 0; i < this->_worldCollisionRBs.size(); i++)
+			bodyMap[this->_worldCollisionRBs[i]] = newArena->_worldCollisionRBs[i];
+		bodyMap[&this->ball->_rigidBody] = &newArena->ball->_rigidBody;
+		for (size_t i = 0; i < this->_cars.size(); i++)
+			bodyMap[&this->_cars[i]->_rigidBody] = &newArena->_cars[i]->_rigidBody;
+
+		auto& src = this->_bulletWorld.m_rsContacts;
+		auto& dst = newArena->_bulletWorld.m_rsContacts;
+		dst.resize(0);
+		for (int i = 0; i < src.size(); i++) {
+			auto body0 = bodyMap.find(src[i].manifold.getBody0()), body1 = bodyMap.find(src[i].manifold.getBody1());
+			if (body0 == bodyMap.end() || body1 == bodyMap.end())
+				continue; // (A body that isn't copied, like a dropshot tile)
+			dst.push_back(src[i]);
+			dst[dst.size() - 1].manifold.setBodies(body0->second, body1->second);
+			dst[dst.size() - 1].solverManifold = NULL;
+		}
+	}
+
 	newArena->tickCount = this->tickCount;
 	newArena->_lastCarID = this->_lastCarID;
 	newArena->_respawnRandState = this->_respawnRandState;
@@ -1128,7 +1149,7 @@ void Arena::SaveSnapshot(ArenaSnapshot& out) const {
 		for (size_t i = 0; i < _cars.size(); i++)
 			if (obj == &_cars[i]->_rigidBody)
 				return out.numWorldBodies + 1 + (int)i;
-		RS_ERR_CLOSE("Arena::SaveSnapshot(): a wheel is on a body that is not in the arena");
+		RS_ERR_CLOSE("Arena::SaveSnapshot(): a wheel or contact is on a body that is not in the arena");
 		return -1;
 	};
 
@@ -1154,6 +1175,35 @@ void Arena::SaveSnapshot(ArenaSnapshot& out) const {
 	out.boostPads.resize(_boostPads.size());
 	for (size_t i = 0; i < _boostPads.size(); i++)
 		out.boostPads[i] = _boostPads[i]->_internalState;
+
+	// (Contacts on bodies that have no index, like dropshot tiles, are left out)
+	auto knownBody = [&](const void* obj) {
+		if (obj == &ball->_rigidBody)
+			return true;
+		for (auto* rb : _worldCollisionRBs)
+			if (obj == rb)
+				return true;
+		for (const Car* car : _cars)
+			if (obj == &car->_rigidBody)
+				return true;
+		return false;
+	};
+	auto& keptContacts = _bulletWorld.m_rsContacts;
+	out.contacts.resize(0);
+	for (int i = 0; i < keptContacts.size(); i++) {
+		const btPersistentManifold& m = keptContacts[i].manifold;
+		if (!knownBody(m.getBody0()) || !knownBody(m.getBody1()))
+			continue;
+		out.contacts.emplace_back();
+		ArenaSnapshot::Contacts& c = out.contacts.back();
+		c.body0 = bodyIndex(m.getBody0());
+		c.body1 = bodyIndex(m.getBody1());
+		c.breakingThreshold = m.getContactBreakingThreshold();
+		c.processingThreshold = m.getContactProcessingThreshold();
+		c.numPoints = m.getNumContacts();
+		for (int j = 0; j < c.numPoints; j++)
+			c.points[j] = m.getContactPoint(j);
+	}
 
 	out.dynProxies.resize(0);
 	int numCells = 0;
@@ -1262,6 +1312,19 @@ void Arena::LoadSnapshot(const ArenaSnapshot& in) {
 	for (size_t i = 0; i < _boostPads.size(); i++) {
 		_boostPads[i]->_internalState = in.boostPads[i];
 		_boostPads[i]->_internalState.prevLockedCarID = carID(in.boostPads[i].prevLockedCarID);
+	}
+
+	auto& keptContacts = _bulletWorld.m_rsContacts;
+	keptContacts.resize(in.contacts.size());
+	for (size_t i = 0; i < in.contacts.size(); i++) {
+		const ArenaSnapshot::Contacts& c = in.contacts[i];
+		btPersistentManifold& m = keptContacts[i].manifold;
+		m = btPersistentManifold(body(c.body0), body(c.body1), 0, c.breakingThreshold, c.processingThreshold);
+		m.setNumContacts(c.numPoints);
+		for (int j = 0; j < c.numPoints; j++)
+			m.getContactPoint(j) = c.points[j];
+		keptContacts[i].solverManifold = NULL;
+		keptContacts[i].seen = false;
 	}
 
 	auto* bp = dynamic_cast<btRSBroadphase*>(_bulletWorld.getBroadphase());
@@ -1377,6 +1440,43 @@ void Arena::Step(int ticksToSimulate) {
 		// Update world
 		{ RS_PROF(2, "stepSimulation");
 		_bulletWorld.stepSimulation(tickTime, 0, tickTime);
+		}
+
+		// A car's world contact normal is made from all of its kept contact points with world bodies, as in RocketSim
+		// v3: per body, the sum of the point normals, normalized; then the sum of those, normalized
+		if (!_cars.empty()) {
+			auto& keptContacts = _bulletWorld.m_rsContacts;
+			for (Car* car : _cars) {
+				btVector3 total(0, 0, 0);
+				bool any = false;
+				for (int i = 0; i < keptContacts.size(); i++) {
+					if (!keptContacts[i].solverManifold)
+						continue;
+					const btPersistentManifold& m = keptContacts[i].manifold;
+					const btCollisionObject* other;
+					if (m.getBody0() == &car->_rigidBody)
+						other = m.getBody1();
+					else if (m.getBody1() == &car->_rigidBody)
+						other = m.getBody0();
+					else
+						continue;
+					if (other->getUserIndex() != BT_USERINFO_NONE || !other->isStaticObject())
+						continue;
+					btVector3 sum(0, 0, 0);
+					for (int j = 0; j < m.getNumContacts(); j++)
+						sum += m.getContactPoint(j).m_normalWorldOnB;
+					float lenSq = sum.length2();
+					if (lenSq >= 1e-8f) {
+						total += sum / sqrtf(lenSq);
+						any = true;
+					}
+				}
+				float totalLenSq = total.length2();
+				if (any && totalLenSq >= 1e-8f) {
+					car->_internalState.worldContact.hasContact = true;
+					car->_internalState.worldContact.contactNormal = total / sqrtf(totalLenSq);
+				}
+			}
 		}
 
 		if (ballWokeThisTick)

@@ -419,6 +419,7 @@ void btDiscreteDynamicsWorld::internalSingleStepSimulation(btScalar timeStep)
 
 	///solve contact and other joint constraints
 	{ RS_PROF(14, "  solve"); solveConstraints(getSolverInfo()); }
+	rsStoreSolvedContacts();
 
 	///CallbackTriggers();
 

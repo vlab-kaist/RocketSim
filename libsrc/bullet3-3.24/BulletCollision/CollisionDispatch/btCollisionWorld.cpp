@@ -233,12 +233,22 @@ void btCollisionWorld::performDiscreteCollisionDetection()
 			m_rsBroadphase->collectOverlappingPairs(m_rsPairs);
 		}
 		RS_PROF(22, "    narrowphase");
+		for (int i = 0; i < m_rsContacts.size(); i++)
+		{
+			m_rsContacts[i].seen = false;
+			m_rsContacts[i].solverManifold = NULL;
+		}
+		btAlignedObjectArray<btPersistentManifold*>& freshManifolds = m_rsFreshManifolds;
 		for (int i = 0; i < m_rsPairs.size(); i++)
 		{
 			btBroadphasePair& pair = m_rsPairs[i];
 			// (btCollisionDispatcher::defaultNearCallback())
 			btCollisionObject* colObj0 = (btCollisionObject*)pair.m_pProxy0->m_clientObject;
 			btCollisionObject* colObj1 = (btCollisionObject*)pair.m_pProxy1->m_clientObject;
+			// A pair's kept contacts stay while the pair overlaps, even in ticks it is skipped
+			int keptIdx = rsFindContacts(colObj0, colObj1);
+			if (keptIdx >= 0)
+				m_rsContacts[keptIdx].seen = true;
 			if (!dispatcher->needsCollision(colObj0, colObj1))
 				continue;
 			btCollisionObjectWrapper obj0Wrap(0, colObj0->getCollisionShape(), colObj0, colObj0->getWorldTransform(), -1, -1);
@@ -304,6 +314,16 @@ void btCollisionWorld::performDiscreteCollisionDetection()
 							contactPointResult.setBody0Wrap(tmpWrap);
 						else
 							contactPointResult.setBody1Wrap(tmpWrap);
+
+						freshManifolds.resize(0);
+						childAlgorithm->getAllContactManifolds(freshManifolds);
+						if (freshManifolds.size() == 1)
+							rsMergeContacts(freshManifolds[0]);
+					}
+					else if (keptIdx >= 0)
+					{
+						// The car's hitbox no longer overlaps the other body: its contacts go with the child algorithm
+						m_rsContacts[keptIdx].seen = false;
 					}
 
 					// (The end of processCollision(): no longer overlapping, so the child algorithm goes. The bounds are
@@ -324,6 +344,24 @@ void btCollisionWorld::performDiscreteCollisionDetection()
 			{
 				btManifoldResult contactPointResult(&obj0Wrap, &obj1Wrap);
 				pair.m_algorithm->processCollision(&obj0Wrap, &obj1Wrap, dispatchInfo, &contactPointResult);
+
+				// (Compound against compound: car against car, whose contacts are not kept; they already match the
+				// game's bumps and demos tick by tick, and keeping them adds impulses after the cars part)
+				bool compounds = colObj0->getCollisionShape()->isCompound() && colObj1->getCollisionShape()->isCompound();
+				freshManifolds.resize(0);
+				pair.m_algorithm->getAllContactManifolds(freshManifolds);
+				if (freshManifolds.size() == 1 && !compounds)
+					rsMergeContacts(freshManifolds[0]);
+			}
+		}
+
+		// The pairs that no longer overlap lose their kept contacts
+		for (int i = m_rsContacts.size() - 1; i >= 0; i--)
+		{
+			if (!m_rsContacts[i].seen)
+			{
+				m_rsContacts[i] = m_rsContacts[m_rsContacts.size() - 1];
+				m_rsContacts.pop_back();
 			}
 		}
 		return;
@@ -335,6 +373,101 @@ void btCollisionWorld::performDiscreteCollisionDetection()
 		RS_PROF(22, "    narrowphase");
 		if (dispatcher)
 			dispatcher->dispatchAllCollisionPairs(m_broadphasePairCache->getOverlappingPairCache(), dispatchInfo, m_dispatcher1);
+	}
+}
+
+int btCollisionWorld::rsFindContacts(const btCollisionObject* body0, const btCollisionObject* body1) const
+{
+	for (int i = 0; i < m_rsContacts.size(); i++)
+	{
+		const btPersistentManifold& m = m_rsContacts[i].manifold;
+		if ((m.getBody0() == body0 && m.getBody1() == body1) || (m.getBody0() == body1 && m.getBody1() == body0))
+			return i;
+	}
+	return -1;
+}
+
+void btCollisionWorld::rsMergeContacts(btPersistentManifold* fresh)
+{
+	const btCollisionObject* body0 = fresh->getBody0();
+	const btCollisionObject* body1 = fresh->getBody1();
+	int idx = rsFindContacts(body0, body1);
+	if (idx >= 0 && m_rsContacts[idx].manifold.getBody0() != body0)
+	{
+		// (The algorithm's body order changed: start over)
+		m_rsContacts[idx].manifold.setBodies(body0, body1);
+		m_rsContacts[idx].manifold.setNumContacts(0);
+	}
+	if (idx < 0)
+	{
+		idx = m_rsContacts.size();
+		m_rsContacts.expand();
+		RSContacts& added = m_rsContacts[idx];
+		added.manifold = btPersistentManifold(body0, body1, 0, fresh->getContactBreakingThreshold(), fresh->getContactProcessingThreshold());
+	}
+	RSContacts& kept = m_rsContacts[idx];
+	kept.seen = true;
+	btPersistentManifold& m = kept.manifold;
+
+	if (m.getNumContacts())
+		m.refreshContactPoints(body0->getWorldTransform(), body1->getWorldTransform());
+
+	if (m.getNumContacts() == 0)
+	{
+		m.setNumContacts(fresh->getNumContacts());
+		for (int i = 0; i < fresh->getNumContacts(); i++)
+			m.getContactPoint(i) = fresh->getContactPoint(i);
+	}
+	else
+	{
+		for (int i = 0; i < fresh->getNumContacts(); i++)
+		{
+			const btManifoldPoint& pt = fresh->getContactPoint(i);
+			int cacheIdx = m.getCacheEntry(pt);
+			if (cacheIdx >= 0)
+			{
+				// Replaces the kept point, keeping only its applied impulse (as RocketSim v3 does)
+				btScalar appliedImpulse = m.getContactPoint(cacheIdx).m_appliedImpulse;
+				m.getContactPoint(cacheIdx) = pt;
+				m.getContactPoint(cacheIdx).m_appliedImpulse = appliedImpulse;
+			}
+			else
+			{
+				m.addManifoldPoint(pt);
+			}
+		}
+	}
+
+	// The solver works on the fresh manifold, which now holds the merged points
+	fresh->setNumContacts(m.getNumContacts());
+	for (int i = 0; i < m.getNumContacts(); i++)
+		fresh->getContactPoint(i) = m.getContactPoint(i);
+	kept.solverManifold = fresh;
+}
+
+void btCollisionWorld::rsStoreSolvedContacts()
+{
+	for (int i = 0; i < m_rsContacts.size(); i++)
+	{
+		RSContacts& kept = m_rsContacts[i];
+		if (!kept.solverManifold)
+			continue;
+		int n = btMin(kept.manifold.getNumContacts(), kept.solverManifold->getNumContacts());
+		for (int j = 0; j < n; j++)
+			kept.manifold.getContactPoint(j).m_appliedImpulse = kept.solverManifold->getContactPoint(j).m_appliedImpulse;
+	}
+}
+
+void btCollisionWorld::rsClearContacts(const btCollisionObject* obj)
+{
+	for (int i = m_rsContacts.size() - 1; i >= 0; i--)
+	{
+		const btPersistentManifold& m = m_rsContacts[i].manifold;
+		if (!obj || m.getBody0() == obj || m.getBody1() == obj)
+		{
+			m_rsContacts[i] = m_rsContacts[m_rsContacts.size() - 1];
+			m_rsContacts.pop_back();
+		}
 	}
 }
 
@@ -381,6 +514,7 @@ void btCollisionWorld::removeCollisionObject(btCollisionObject* collisionObject)
 			//
 			getBroadphase()->getOverlappingPairCache()->cleanProxyFromPairs(bp, m_dispatcher1);
 			rsReleasePairs(bp);
+			rsClearContacts(collisionObject);
 			getBroadphase()->destroyProxy(bp, m_dispatcher1);
 			collisionObject->setBroadphaseHandle(0);
 		}

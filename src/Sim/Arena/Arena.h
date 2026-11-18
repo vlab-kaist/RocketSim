@@ -58,6 +58,14 @@ struct ArenaSnapshot {
 		int wheelGround[4]; // The body under each wheel, as a body index (see below), or -1
 	};
 
+	// Contact points kept across ticks for a pair of bodies (see btCollisionWorld::m_rsContacts)
+	struct Contacts {
+		int body0, body1; // Body indices (see below)
+		btScalar breakingThreshold, processingThreshold;
+		int numPoints;
+		btManifoldPoint points[MANIFOLD_CACHE_SIZE];
+	};
+
 	struct DynProxy {
 		btVector3 aabbMin, aabbMax;
 		int cellIdx, iIdx, jIdx, kIdx;
@@ -76,6 +84,7 @@ struct ArenaSnapshot {
 	Body ballBody;
 	std::vector<CarData> cars;
 	std::vector<BoostPadState> boostPads;
+	std::vector<Contacts> contacts;
 
 	// Broadphase: the cells and bounds of the moving bodies (ball, then cars), and the order of the
 	// moving bodies in each of their cells (it decides the order contacts are handled in), as indices

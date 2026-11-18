@@ -36,14 +36,33 @@ int main(int argc, char** argv) {
 	int after = argc > 2 ? atoi(argv[2]) : 600;
 	RocketSim::Init(argv[1], true);
 	int failures = 0, total = 0;
+	// Also games whose cars start upside down on the floor, so the car bodies rest on contacts kept across ticks
+	for (int upsideDown = 0; upsideDown < 2; upsideDown++)
 	for (int perTeam = 1; perTeam <= 3; perTeam++) {
 		for (int warm : { 0, 8, 16, 40, 96, 200, 333, 480, 777, 1000, 1600, 2400, 3000, 4000 }) {
+			if (upsideDown && warm > 333)
+				continue;
 			Arena* a = Arena::Create(GameMode::SOCCAR);
 			for (int t = 0; t < 2; t++)
 				for (int i = 0; i < perTeam; i++)
 					a->AddCar(t ? Team::ORANGE : Team::BLUE);
 			a->ResetToRandomKickoff(7);
-			for (int i = 0; i < warm; i += 8) { setControls(a, 1000 + i); a->Step(8); }
+			if (upsideDown) {
+				int k = 0;
+				for (Car* c : a->GetCars()) {
+					CarState s = c->GetState();
+					s.pos.z = 45 + 10 * (k++ % 3);
+					s.rotMat = Angle(0.3f * k, 0, M_PI).ToRotMat();
+					s.isOnGround = false;
+					c->SetState(s);
+				}
+			}
+			for (int i = 0; i < warm; i += 8) {
+				setControls(a, 1000 + i);
+				if (upsideDown)
+					for (Car* c : a->GetCars()) c->controls = CarControls();
+				a->Step(8);
+			}
 			Arena* b = a->Clone(false);
 			int firstDiff = -1;
 			for (int i = 0; i < after && firstDiff < 0; i += 8) {
@@ -57,7 +76,7 @@ int main(int argc, char** argv) {
 			total++;
 			if (firstDiff >= 0) {
 				failures++;
-				std::printf("%dv%d cloned after %d ticks: differs after %d ticks\n", perTeam, perTeam, warm, firstDiff);
+				std::printf("%dv%d%s cloned after %d ticks: differs after %d ticks\n", perTeam, perTeam, upsideDown ? " upside down" : "", warm, firstDiff);
 			}
 			delete a;
 			delete b;

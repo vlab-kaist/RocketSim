@@ -52,6 +52,10 @@ void Ball::SetState(const BallState& state) {
 
 	_velocityImpulseCache = { 0,0,0 };
 	_internalState.tickCountSinceUpdate = 0;
+
+	// Contacts kept from before the state set are of another place
+	if (_bulletWorld)
+		_bulletWorld->rsClearContacts(&_rigidBody);
 }
 
 btCollisionShape* MakeBallCollisionShape(GameMode gameMode, const MutatorConfig& mutatorConfig, btVector3& localIntertia) {
@@ -87,6 +91,7 @@ btCollisionShape* MakeBallCollisionShape(GameMode gameMode, const MutatorConfig&
 }
 
 void Ball::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const MutatorConfig& mutatorConfig, bool noRot) {
+	_bulletWorld = bulletWorld;
 	btVector3 localIneria;
 	_collisionShape = MakeBallCollisionShape(gameMode, mutatorConfig, localIneria);
 

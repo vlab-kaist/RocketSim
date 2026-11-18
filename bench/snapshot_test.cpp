@@ -51,19 +51,35 @@ static Frame capture(Arena* a) {
 int main(int argc, char** argv) {
 	int after = argc > 2 ? atoi(argv[2]) : 600;
 	RocketSim::Init(argv[1], true);
-	int failures = 0, total = 0, idFieldsSet = 0;
+	int failures = 0, total = 0, idFieldsSet = 0, keptPoints = 0;
 	double saveTime = 0, loadTime = 0; int timed = 0;
+	// Also games whose cars start upside down on the floor, so the car bodies rest on contacts kept across ticks
+	for (int upsideDown = 0; upsideDown < 2; upsideDown++)
 	for (int perTeam = 1; perTeam <= 3; perTeam++) {
 		for (int warm : { 0, 8, 40, 200, 333, 777, 1600, 3000 }) {
+			if (upsideDown && warm > 333)
+				continue;
 			Arena* a = Arena::Create(GameMode::SOCCAR);
 			for (int t = 0; t < 2; t++)
 				for (int i = 0; i < perTeam; i++)
 					a->AddCar(t ? Team::ORANGE : Team::BLUE);
 			a->ResetToRandomKickoff(7);
+			if (upsideDown) {
+				int k = 0;
+				for (Car* c : a->GetCars()) {
+					CarState s = c->GetState();
+					s.pos.z = 45 + 10 * (k++ % 3);
+					s.rotMat = Angle(0.3f * k, 0, M_PI).ToRotMat();
+					s.isOnGround = false;
+					c->SetState(s);
+				}
+			}
 			// Drive at the ball for the kickoff (touches and bumps), then random
 			for (int i = 0; i < warm; i += 8) {
 				setControls(a, 1000 + i);
-				if (i < 320)
+				if (upsideDown)
+					for (Car* c : a->GetCars()) c->controls = CarControls();
+				else if (i < 320)
 					for (Car* c : a->GetCars()) { CarControls cc; cc.throttle = 1; cc.boost = true; cc.jump = i >= 200 && i < 216; c->controls = cc; }
 				a->Step(8);
 			}
@@ -73,6 +89,8 @@ int main(int argc, char** argv) {
 				for (Car* c : a->GetCars()) set += c->GetState().carContact.otherCarID != 0;
 				for (BoostPad* p : a->GetBoostPads()) set += p->GetState().prevLockedCarID != 0;
 				idFieldsSet += set;
+				for (int k = 0; k < a->_bulletWorld.m_rsContacts.size(); k++)
+					keptPoints += a->_bulletWorld.m_rsContacts[k].manifold.getNumContacts();
 			}
 			ArenaSnapshot snap;
 			auto t0 = std::chrono::steady_clock::now();
@@ -98,7 +116,7 @@ int main(int argc, char** argv) {
 			total++;
 			if (firstDiff >= 0) {
 				failures++;
-				std::printf("%dv%d snapshot after %d ticks: differs after %d ticks\n", perTeam, perTeam, warm, firstDiff);
+				std::printf("%dv%d%s snapshot after %d ticks: differs after %d ticks\n", perTeam, perTeam, upsideDown ? " upside down" : "", warm, firstDiff);
 			}
 
 			// Other arenas with the same layout: other car IDs (a car added and removed first) and another game
@@ -150,7 +168,7 @@ int main(int argc, char** argv) {
 			delete a;
 		}
 	}
-	std::printf("(car ID fields set at the snapshots: %d)\n", idFieldsSet);
+	std::printf("(car ID fields set at the snapshots: %d; kept contact points: %d)\n", idFieldsSet, keptPoints);
 	std::printf("%d/%d snapshots match; save %.2f us, load %.2f us\n", total - failures, total, saveTime / timed * 1e6, loadTime / timed * 1e6);
 	return failures != 0;
 }

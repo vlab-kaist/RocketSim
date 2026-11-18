@@ -42,6 +42,10 @@ void Car::SetState(const CarState& state) {
 	_internalState = state;
 	_internalState.tickCountSinceUpdate = 0;
 
+	// Contacts kept from before the state set are of another place
+	if (_bulletVehicle.m_dynamicsWorld)
+		_bulletVehicle.m_dynamicsWorld->rsClearContacts(&_rigidBody);
+
 	// The tick logic reads the wheel contacts of the last vehicle update, so trace them for the new state
 	if (_bulletVehicle.m_dynamicsWorld && !_internalState.isDemoed)
 		_UpdateWheelContacts(true);

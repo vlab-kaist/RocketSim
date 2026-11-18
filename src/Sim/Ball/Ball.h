@@ -86,6 +86,7 @@ public:
 	static void _DestroyBall(Ball* ball) { delete ball; }
 
 	void _BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const MutatorConfig& mutatorConfig, bool noRot);
+	btDynamicsWorld* _bulletWorld = NULL;
 
 	bool _groundStickApplied = false;
 	Vec _velocityImpulseCache = { 0,0,0 };
