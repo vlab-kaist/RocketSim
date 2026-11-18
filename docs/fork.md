@@ -68,5 +68,11 @@ Known remaining differences:
   asymmetries; the fork tips the other way than the game (v3 matches it).
 - Random two-car play (`rand_pair_*`): some runs diverge in both the fork and v3 by about the same
   amount; most likely the game's ±1 tick input timing jitter, not the physics.
-- Fast body landings (`roof_land_fast`, `side_land`, `nose_land`): the fork and v3 diverge at the same
-  tick by the same amount; under investigation (possibly the recording setup).
+- Fast body landings (`roof_land_fast`, `side_land`, `nose_land`: the car body hits the floor at
+  ~1000 uu/s): the fork and v3 diverge at the same tick by the same amount. On the first contact tick the
+  game stops the fall almost completely (-900 -> -5 uu/s) with stronger friction, while the fork absorbs it
+  over several ticks. Slow body contacts match since contacts are kept across ticks, so the game probably
+  makes several contact points on the first tick (its floor may be triangles rather than a plane). Tried
+  and rejected (worse overall): Bullet's plane multipoint perturbation (3 or 4 iterations, also gated on the
+  kept point count as the game's persistent manifold would), the default
+  split impulse threshold (-0.04), no split impulse.
