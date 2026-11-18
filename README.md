@@ -1,3 +1,7 @@
+> **vlab-kaist fork** (branch `fast-step`): matched to the real game against recordings, exactly
+> deterministic (clones, snapshots, threads) and faster. See [docs/fork.md](docs/fork.md) and
+> [CHANGELOG.md](CHANGELOG.md).
+
 ![image](https://user-images.githubusercontent.com/36944229/219303954-7267bce1-b7c5-4f15-881c-b9545512e65b.png)
 
 **A C++ library for simulating Rocket League games at maximum efficiency**
