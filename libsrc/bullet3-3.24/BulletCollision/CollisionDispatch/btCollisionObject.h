@@ -128,13 +128,13 @@ public:
 	btVector3 m_customDebugColorRGB;
 
 	// ROCKETSIM CHANGE: Add custom info for special collision resolution
+	// (Every member has an initializer: btVector3's constructor leaves it uninitialized, and g++ 11 didn't zero it
+	// for "= {}", so the totals of the next tick started from leftover stack values)
 	struct btSpecialResolveInfo {
-		int m_numSpecialCollisions;
-		btVector3 m_totalNormal;
-		float m_totalDist;
-		float m_restitution, m_friction;
-
-		btSpecialResolveInfo() = default;
+		int m_numSpecialCollisions = 0;
+		btVector3 m_totalNormal = btVector3(0, 0, 0);
+		float m_totalDist = 0;
+		float m_restitution = 0, m_friction = 0;
 	};
 	btSpecialResolveInfo m_specialResolveInfo = {};
 

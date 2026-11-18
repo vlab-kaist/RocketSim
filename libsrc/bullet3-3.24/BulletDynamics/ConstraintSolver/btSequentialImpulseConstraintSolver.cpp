@@ -527,6 +527,7 @@ void btSequentialImpulseConstraintSolver::setupFrictionConstraint(btSolverConstr
 
 	solverConstraint.m_friction = cp.m_combinedFriction;
 	solverConstraint.m_originalContactPoint = 0;
+	solverConstraint.m_isSpecial = false; // (Friction rows come from expandNonInitializing())
 
 	solverConstraint.m_appliedImpulse = 0.f;
 	solverConstraint.m_appliedPushImpulse = 0.f;
