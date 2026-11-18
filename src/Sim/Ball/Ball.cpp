@@ -36,6 +36,23 @@ const BallState& Ball::_UpdateState() {
 	return _internalState;
 }
 
+void Ball::_UpdateTickStartState() {
+	// As Car::_UpdateTickStartState()
+	_tickStartState = _internalState;
+	Vec pos = _rigidBody.getWorldTransform().getOrigin() * BT_TO_UU;
+	RotMat rotMat = _rigidBody.getWorldTransform().getBasis();
+	Vec vel = _rigidBody.getLinearVelocity() * BT_TO_UU;
+	Vec angVel = _rigidBody.getAngularVelocity();
+	_internalState.pos = pos;
+	_tickStartState.pos = pos;
+	_internalState.rotMat = rotMat;
+	_tickStartState.rotMat = rotMat;
+	_internalState.vel = vel;
+	_tickStartState.vel = vel;
+	_internalState.angVel = angVel;
+	_tickStartState.angVel = angVel;
+}
+
 void Ball::SetState(const BallState& state) {
 
 	_internalState = state;

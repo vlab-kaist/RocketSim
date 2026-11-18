@@ -8,6 +8,13 @@ Bench checksums identify the exact physics; they change whenever results change.
 
 ## 2026-11-19
 
+- **Speed: no stalled store forwarding** (results unchanged, checksums the same). Vectors written one float
+  at a time and then read as a whole (a 16- or 64-byte load over several smaller stores) can't be forwarded
+  and wait ~15 cycles; there were ~330 per 1v1 tick. `btVector3(x,y,z)`/`setValue` build in a register
+  (compound AABBs), `RotMat(btMatrix3x3)` transposes in registers, quantization builds its vectors and
+  quaternions without per-component stores, and the tick-start states copy the state before writing the
+  fresh fields (`Car/Ball::_UpdateTickStartState`). 1v1 611k -> 717k ticks/s, 3v3 231k -> 272k, ball only
+  2.54M -> 3.06M (best of 5, same machine and load). Found with the Zen 4 event `ls_bad_status2.stli_other`.
 - **Goal timing checked against the game**: 14 goal scenarios x3 (rolling 100-3000 uu/s, in the air up to
   just under the crossbar, near the posts, angled, lob, spinning). `Arena::IsBallScored()` scores on the
   same tick as the game in all 42 (`python -m rlval.goals`); the slow roll brackets the game's threshold

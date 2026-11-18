@@ -27,6 +27,28 @@ const CarState& Car::_UpdateState() {
 	return _internalState;
 }
 
+void Car::_UpdateTickStartState(bool updateRotMat) {
+	// The state is copied first and the fresh fields written to both copies: copying them through memory right
+	// after writing them stalls store forwarding
+	_tickStartState = _internalState;
+	if (updateRotMat) {
+		RotMat rotMat = _rigidBody.getWorldTransform().getBasis();
+		_internalState.rotMat = rotMat;
+		_tickStartState.rotMat = rotMat;
+	}
+	if (!_internalState.isDemoed) {
+		Vec pos = _rigidBody.getWorldTransform().m_origin * BT_TO_UU;
+		Vec vel = _rigidBody.m_linearVelocity * BT_TO_UU;
+		Vec angVel = _rigidBody.m_angularVelocity;
+		_internalState.pos = pos;
+		_tickStartState.pos = pos;
+		_internalState.vel = vel;
+		_tickStartState.vel = vel;
+		_internalState.angVel = angVel;
+		_tickStartState.angVel = angVel;
+	}
+}
+
 // Update our bullet stuff to this new state, replace our internal state with it
 void Car::SetState(const CarState& state) {
 	btTransform rbTransform;

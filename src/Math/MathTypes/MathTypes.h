@@ -174,6 +174,16 @@ struct RS_ALIGN_16 RotMat {
 	RotMat(Vec forward, Vec right, Vec up) : forward(forward), right(right), up(up) {}
 
 	RotMat(const btMatrix3x3& bulletMat) {
+#if defined(BT_USE_SSE_IN_API) && defined(BT_USE_SSE) && !defined(BT_USE_DOUBLE_PRECISION)
+		// Transposed in registers (9 separate stores read back as vectors stall store forwarding);
+		// the 4th components come from the zero row
+		__m128 r0 = bulletMat[0].mVec128, r1 = bulletMat[1].mVec128, r2 = bulletMat[2].mVec128, r3 = _mm_setzero_ps();
+		_MM_TRANSPOSE4_PS(r0, r1, r2, r3);
+		_mm_store_ps(&forward.x, r0);
+		_mm_store_ps(&right.x, r1);
+		_mm_store_ps(&up.x, r2);
+		return;
+#endif
 		for (int i = 0; i < 3; i++) {
 			for (int j = 0; j < 3; j++) {
 				// NOTE: btMatrix3x3 is row-major, whereas we are column-major

@@ -48,6 +48,17 @@ for the same binary and the same libm; across compilers or libm versions they ma
 - New car states start with `flipTime = 1` (past the 0.3 s pitch lock): the game doesn't lock pitch at
   kickoffs or after a state set.
 
+## Speed notes
+
+- Profile with `perf record` on `build-bench/bench` (add `-g` to the flags for source lines). The profile is
+  flat; the biggest single costs are wheel ray casts, compound AABBs, orientation integration and
+  quantization.
+- Watch for stalled store forwarding: a vector written one component at a time (`v[i] = ...`, per-element
+  constructors, arrays indexed by a computed index, chained assignments of structs) and then loaded as a
+  whole stalls the load. Build vectors from scalars in registers (`btVector3(x, y, z)` does), copy structs
+  before writing fresh fields into them. On Zen 4 count them with
+  `perf stat -e ls_bad_status2.stli_other` (Intel: `ld_blocks.store_forward`).
+
 ## Validation
 
 `validation/` (see its README) records scenarios in the real game through RLBot v5 and replays them

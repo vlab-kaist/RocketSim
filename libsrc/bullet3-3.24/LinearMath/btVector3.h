@@ -126,10 +126,15 @@ public:
    */
 	SIMD_FORCE_INLINE btVector3(const btScalar& _x, const btScalar& _y, const btScalar& _z)
 	{
+#if defined(BT_USE_SSE_IN_API) && defined(BT_USE_SSE) && !defined(BT_USE_DOUBLE_PRECISION)
+		// RocketSim: built in a register; separate stores followed by a 16-byte load stall store forwarding
+		mVec128 = _mm_setr_ps(_x, _y, _z, 0.f);
+#else
 		m_floats[0] = _x;
 		m_floats[1] = _y;
 		m_floats[2] = _z;
 		m_floats[3] = btScalar(0.f);
+#endif
 	}
 
 #if (defined(BT_USE_SSE_IN_API) && defined(BT_USE_SSE)) || defined(BT_USE_NEON)
@@ -652,10 +657,15 @@ public:
 
 	SIMD_FORCE_INLINE void setValue(const btScalar& _x, const btScalar& _y, const btScalar& _z)
 	{
+#if defined(BT_USE_SSE_IN_API) && defined(BT_USE_SSE) && !defined(BT_USE_DOUBLE_PRECISION)
+		// RocketSim: built in a register; separate stores followed by a 16-byte load stall store forwarding
+		mVec128 = _mm_setr_ps(_x, _y, _z, 0.f);
+#else
 		m_floats[0] = _x;
 		m_floats[1] = _y;
 		m_floats[2] = _z;
 		m_floats[3] = btScalar(0.f);
+#endif
 	}
 
 	void getSkewSymmetricMatrix(btVector3 * v0, btVector3 * v1, btVector3 * v2) const

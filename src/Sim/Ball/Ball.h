@@ -74,6 +74,8 @@ public:
 	BallState GetState();
 	// Brings the stored state's physics up to date with the rigid body (what GetState() returns)
 	const BallState& _UpdateState();
+	// _UpdateState(), then copies the state to _tickStartState
+	void _UpdateTickStartState();
 	void SetState(const BallState& state);
 
 	btRigidBody _rigidBody;

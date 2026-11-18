@@ -160,6 +160,8 @@ public:
 	CarState GetState();
 	// Brings the stored state's physics up to date with the rigid body (what GetState() returns)
 	const CarState& _UpdateState();
+	// _UpdateState() (and the rotation from the body when updateRotMat), then copies the state to _tickStartState
+	void _UpdateTickStartState(bool updateRotMat);
 	void SetState(const CarState& state);
 
 	void Demolish(float respawnDelay = RLConst::DEMO_RESPAWN_TIME);

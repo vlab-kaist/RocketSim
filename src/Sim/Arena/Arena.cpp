@@ -378,10 +378,10 @@ namespace Quantize {
 	}
 
 	static btVector3 RoundVec(const btVector3& v, float scale, bool isVelocity) {
-		btVector3 out;
-		for (int i = 0; i < 3; i++)
-			out[i] = isVelocity ? RoundVelocity(v[i], scale) : RoundPosition(v[i], scale);
-		return out;
+		// Built from scalars rather than stored per component (a stalled store-forward when read as a vector)
+		if (isVelocity)
+			return btVector3(RoundVelocity(v.x(), scale), RoundVelocity(v.y(), scale), RoundVelocity(v.z(), scale));
+		return btVector3(RoundPosition(v.x(), scale), RoundPosition(v.y(), scale), RoundPosition(v.z(), scale));
 	}
 
 	struct Quat { float x, y, z, w; };
@@ -449,25 +449,33 @@ namespace Quantize {
 	}
 
 	// Smallest-three encoding: the largest component is dropped and rebuilt from the others
-	static Quat QuantizeRotation(Quat in) {
+	// (No arrays indexed by the dropped component: building the result through memory stalls store forwarding)
+	static inline Quat QuantizeRotation(const Quat& in) {
 		Quat q = Normalize(in, 1e-8f);
-		float c[4] = { q.x, q.y, q.z, q.w };
-		float a[4] = { fabsf(c[0]), fabsf(c[1]), fabsf(c[2]), fabsf(c[3]) };
-		int i01 = (a[0] < a[1]) ? 1 : 0;
-		int i23 = (a[2] < a[3]) ? 3 : 2;
-		int big = (a[i01] >= a[i23]) ? i01 : i23;
-		float sign = (c[big] < 0) ? -1.f : 1.f;
+		float ax = fabsf(q.x), ay = fabsf(q.y), az = fabsf(q.z), aw = fabsf(q.w);
+		bool big1 = ax < ay, big3 = az < aw;
+		float a01 = big1 ? ay : ax, a23 = big3 ? aw : az;
+		int big = (a01 >= a23) ? (big1 ? 1 : 0) : (big3 ? 3 : 2);
 
-		float d[3];
-		for (int i = 0, n = 0; i < 4; i++)
-			if (i != big)
-				d[n++] = QuantizeComponent(c[i] * sign);
+		// The other three components, in order
+		float c0, c1, c2, cBig;
+		switch (big) {
+		case 0:  c0 = q.y; c1 = q.z; c2 = q.w; cBig = q.x; break;
+		case 1:  c0 = q.x; c1 = q.z; c2 = q.w; cBig = q.y; break;
+		case 2:  c0 = q.x; c1 = q.y; c2 = q.w; cBig = q.z; break;
+		default: c0 = q.x; c1 = q.y; c2 = q.z; cBig = q.w; break;
+		}
+		float sign = (cBig < 0) ? -1.f : 1.f;
+		float d0 = QuantizeComponent(c0 * sign), d1 = QuantizeComponent(c1 * sign), d2 = QuantizeComponent(c2 * sign);
 
-		float rest = ((1 - d[0] * d[0]) - d[1] * d[1]) - d[2] * d[2];
-		float o[4];
-		for (int i = 0, n = 0; i < 4; i++)
-			o[i] = (i == big) ? sqrtf(RS_MAX(rest, 0.f)) : d[n++];
-		return Normalize({ o[0], o[1], o[2], o[3] }, 1e-8f);
+		float rest = ((1 - d0 * d0) - d1 * d1) - d2 * d2;
+		float b = sqrtf(RS_MAX(rest, 0.f));
+		switch (big) {
+		case 0:  return Normalize({ b, d0, d1, d2 }, 1e-8f);
+		case 1:  return Normalize({ d0, b, d1, d2 }, 1e-8f);
+		case 2:  return Normalize({ d0, d1, b, d2 }, 1e-8f);
+		default: return Normalize({ d0, d1, d2, b }, 1e-8f);
+		}
 	}
 
 	// The game sends analog inputs as bytes: negatives in steps of 1/128, positives in steps of 1/127
@@ -1388,15 +1396,15 @@ void Arena::Step(int ticksToSimulate) {
 			for (Car* car : _cars) {
 				Quantize::QuantizeControls(car->controls);
 				Quantize::QuantizeBody(car->_rigidBody, true);
-				car->_internalState.rotMat = car->_rigidBody.getWorldTransform().getBasis();
 			}
 			Quantize::QuantizeBody(ball->_rigidBody, !_config.noBallRot || gameMode == GameMode::SNOWDAY);
 		}
 
 		{ RS_PROF(8, "  tick start states");
+		// (with quantization the cars' rotations come from the quantized bodies)
 		for (Car* car : _cars)
-			car->_tickStartState = car->_UpdateState();
-		ball->_tickStartState = ball->_UpdateState();
+			car->_UpdateTickStartState(_config.quantizePhysics);
+		ball->_UpdateTickStartState();
 		}
 		}
 
