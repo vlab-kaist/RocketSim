@@ -190,6 +190,9 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel, btCollisionObject* object, cons
 			wheel.m_clippedInvContactDotSuspension = 10;
 		}
 
+		// Set again every trace (as in RocketSim v3): a value left from an earlier, deeper contact would keep
+		// pushing the car while the wheel stays in contact
+		wheel.m_extraPushback = 0;
 		bool isCarHit = object->getUserIndex() == BT_USERINFO_TYPE_CAR;
 		if (object->isStaticObject() || isCarHit) { // Compute m_extraPushback when colliding with the world or another car
 			float rayPushbackThresh = (wheel.m_suspensionRestLength1 + wheel.m_wheelsRadius) - RLConst::BTVehicle::SUSPENSION_SUBTRACTION;
