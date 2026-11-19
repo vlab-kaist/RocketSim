@@ -14,6 +14,7 @@ subject to the following restrictions:
 */
 
 #include "btDiscreteDynamicsWorld.h"
+#include "../../LinearMath/btPoolAllocator.h"
 #include "../../../../src/RSProf.h"
 
 //collision detection
@@ -176,6 +177,83 @@ struct InplaceSolverIslandCallback : public btSimulationIslandManager::IslandCal
 		m_constraints.resize(0);
 	}
 };
+
+// Thread scratch pool sizes (as btDefaultCollisionConfiguration's defaults / 32 and / 16; more fall back to the heap)
+#define RS_THREAD_ALGORITHM_POOL_SIZE 128
+#define RS_THREAD_MANIFOLD_POOL_SIZE 256
+
+struct btDiscreteDynamicsWorld::RSThreadScratch
+{
+	btSequentialImpulseConstraintSolver solver;
+	btSimulationIslandManager islandManager;
+	InplaceSolverIslandCallback callback;
+	btPoolAllocator* algorithmPool = NULL;
+	btPoolAllocator* manifoldPool = NULL;
+	bool inUse = false;
+
+	RSThreadScratch() : callback(&solver, 0, 0) {}
+	~RSThreadScratch()
+	{
+		delete algorithmPool;
+		delete manifoldPool;
+	}
+};
+
+bool btDiscreteDynamicsWorld::rsBeginThreadScratch()
+{
+	static thread_local RSThreadScratch scratch;
+	if (scratch.inUse || m_rsScratch)
+		return false;
+
+	btCollisionDispatcher* dispatcher = (btCollisionDispatcher*)getDispatcher();
+	btPoolAllocator* ownAlgorithmPool = dispatcher->rsGetAlgorithmPool();
+	btPoolAllocator* ownManifoldPool = dispatcher->getInternalManifoldPool();
+	if (!scratch.algorithmPool)
+	{
+		scratch.algorithmPool = new btPoolAllocator(ownAlgorithmPool->getElementSize(), RS_THREAD_ALGORITHM_POOL_SIZE);
+		scratch.manifoldPool = new btPoolAllocator(ownManifoldPool->getElementSize(), RS_THREAD_MANIFOLD_POOL_SIZE);
+	}
+	if (ownAlgorithmPool->getElementSize() > scratch.algorithmPool->getElementSize() ||
+		ownManifoldPool->getElementSize() > scratch.manifoldPool->getElementSize())
+		return false;
+
+	// (Nothing may hold memory of the world's own pools while the thread's are in place)
+	rsReleasePairs();
+
+	m_rsOwnSolver = m_constraintSolver;
+	m_rsOwnIslandManager = m_islandManager;
+	m_rsOwnIslandCallback = m_solverIslandCallback;
+	m_rsOwnAlgorithmPool = ownAlgorithmPool;
+	m_rsOwnManifoldPool = ownManifoldPool;
+
+	m_constraintSolver = &scratch.solver;
+	m_islandManager = &scratch.islandManager;
+	m_solverIslandCallback = &scratch.callback;
+	scratch.callback.m_solver = &scratch.solver;
+	scratch.callback.m_dispatcher = dispatcher;
+	dispatcher->rsSetPools(scratch.algorithmPool, scratch.manifoldPool);
+
+	scratch.inUse = true;
+	m_rsScratch = &scratch;
+	return true;
+}
+
+void btDiscreteDynamicsWorld::rsEndThreadScratch()
+{
+	if (!m_rsScratch)
+		return;
+
+	// The pairs' algorithms and manifolds go back to the thread's pools
+	rsReleasePairs();
+
+	m_constraintSolver = m_rsOwnSolver;
+	m_islandManager = m_rsOwnIslandManager;
+	m_solverIslandCallback = m_rsOwnIslandCallback;
+	((btCollisionDispatcher*)getDispatcher())->rsSetPools(m_rsOwnAlgorithmPool, m_rsOwnManifoldPool);
+
+	m_rsScratch->inUse = false;
+	m_rsScratch = NULL;
+}
 
 void btDiscreteDynamicsWorld::setup(btCollisionDispatcher* dispatcher, btBroadphaseInterface* pairCache, btSequentialImpulseConstraintSolver* constraintSolver, btCollisionConfiguration* collisionConfiguration)
 {

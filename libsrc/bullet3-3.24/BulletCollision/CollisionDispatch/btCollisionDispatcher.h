@@ -156,6 +156,14 @@ public:
 		m_collisionConfiguration = config;
 	}
 
+	// RocketSim: swaps the pools algorithms and manifolds come from (both must be empty of this dispatcher's objects)
+	void rsSetPools(btPoolAllocator* algorithmPool, btPoolAllocator* manifoldPool)
+	{
+		m_collisionAlgorithmPoolAllocator = algorithmPool;
+		m_persistentManifoldPoolAllocator = manifoldPool;
+	}
+	btPoolAllocator* rsGetAlgorithmPool() { return m_collisionAlgorithmPoolAllocator; }
+
 	btPoolAllocator* getInternalManifoldPool()
 	{
 		return m_persistentManifoldPoolAllocator;

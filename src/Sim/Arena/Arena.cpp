@@ -1,5 +1,6 @@
 #include "Arena.h"
 #include <algorithm>
+#include <bit>
 #include "../../RSProf.h"
 #include <xmmintrin.h>
 #include "../../RocketSim.h"
@@ -744,14 +745,10 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
 
 		btDefaultCollisionConstructionInfo collisionConfigConstructionInfo = {};
 
-		// These take up a ton of memory normally
-		if (_config.memWeightMode == ArenaMemWeightMode::LIGHT) {
-			collisionConfigConstructionInfo.m_defaultMaxPersistentManifoldPoolSize /= 32;
-			collisionConfigConstructionInfo.m_defaultMaxCollisionAlgorithmPoolSize /= 64;
-		} else {
-			collisionConfigConstructionInfo.m_defaultMaxPersistentManifoldPoolSize /= 16;
-			collisionConfigConstructionInfo.m_defaultMaxCollisionAlgorithmPoolSize /= 32;
-		}
+		// Small: while stepping, the algorithms and manifolds come from the thread's pools (see Step()); a full
+		// pool falls back to the heap
+		collisionConfigConstructionInfo.m_defaultMaxPersistentManifoldPoolSize = 16;
+		collisionConfigConstructionInfo.m_defaultMaxCollisionAlgorithmPoolSize = 16;
 
 		_bulletWorldParams.collisionConfig.setup(collisionConfigConstructionInfo);
 
@@ -854,6 +851,13 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
 				_boostPadGrid.Add(pad);
 			}
 		}
+	}
+
+	_boostPadsBusy.assign((_boostPads.size() + 63) / 64, 0);
+	for (size_t i = 0; i < _boostPads.size(); i++) {
+		_boostPads[i]->_busyWord = &_boostPadsBusy[i / 64];
+		_boostPads[i]->_busyBit = 1ull << (i % 64);
+		_boostPads[i]->_MarkBusy();
 	}
 
 	// Set internal tick callback
@@ -1320,6 +1324,7 @@ void Arena::LoadSnapshot(const ArenaSnapshot& in) {
 	for (size_t i = 0; i < _boostPads.size(); i++) {
 		_boostPads[i]->_internalState = in.boostPads[i];
 		_boostPads[i]->_internalState.prevLockedCarID = carID(in.boostPads[i].prevLockedCarID);
+		_boostPads[i]->_MarkBusy();
 	}
 
 	auto& keptContacts = _bulletWorld.m_rsContacts;
@@ -1386,6 +1391,13 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
 void Arena::Step(int ticksToSimulate) {
 	_stop = false;
 
+	// Collision algorithms, manifolds and solver buffers from the thread's scratch (see btDiscreteDynamicsWorld)
+	struct ThreadScratchScope {
+		btDiscreteDynamicsWorld& world;
+		ThreadScratchScope(btDiscreteDynamicsWorld& world) : world(world) { world.rsBeginThreadScratch(); }
+		~ThreadScratchScope() { world.rsEndThreadScratch(); }
+	} threadScratch(_bulletWorld);
+
 	for (int i = 0; i < ticksToSimulate && !_stop; i++) {
 
 		_bulletWorld.setWorldUserInfo(this);
@@ -1424,9 +1436,12 @@ void Arena::Step(int ticksToSimulate) {
 			car->_PreTickUpdate(gameMode, tickTime, _mutatorConfig, this);
 		}
 
+		// (Only the pads with something to update: an idle pad's updates change nothing, and touching all of them
+		// every tick costs cache misses)
 		if (hasArenaStuff && !ballOnly) {
-			for (BoostPad* pad : _boostPads)
-				pad->_PreTickUpdate(tickTime);
+			for (size_t w = 0; w < _boostPadsBusy.size(); w++)
+				for (uint64_t bits = _boostPadsBusy[w]; bits; bits &= bits - 1)
+					_boostPads[w * 64 + std::countr_zero(bits)]->_PreTickUpdate(tickTime);
 		}
 
 		// Update ball
@@ -1508,10 +1523,18 @@ void Arena::Step(int ticksToSimulate) {
 
 		if (hasArenaStuff && !ballOnly)
 		{
-			for (BoostPad* pad : _boostPads)
+			// (In pad order, as before; pads the cars got on this tick were marked busy)
+			for (size_t w = 0; w < _boostPadsBusy.size(); w++)
 			{
-				if (pad->_PostTickUpdate(tickTime, _mutatorConfig) && _boostPickupCallback.func)
-					_boostPickupCallback.func(this, pad->_internalState.curLockedCar, pad, _boostPickupCallback.userInfo);
+				for (uint64_t bits = _boostPadsBusy[w]; bits; bits &= bits - 1)
+				{
+					int bit = std::countr_zero(bits);
+					BoostPad* pad = _boostPads[w * 64 + bit];
+					if (pad->_PostTickUpdate(tickTime, _mutatorConfig) && _boostPickupCallback.func)
+						_boostPickupCallback.func(this, pad->_internalState.curLockedCar, pad, _boostPickupCallback.userInfo);
+					if (pad->_IsIdle())
+						_boostPadsBusy[w] &= ~(1ull << bit);
+				}
 			}
 		}
 

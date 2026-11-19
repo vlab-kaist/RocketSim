@@ -98,7 +98,6 @@ protected:
 	// RocketSim: with a btRSBroadphase, the overlapping pairs of the last collision detection live here
 	// instead of in the broadphase's pair cache (see performDiscreteCollisionDetection())
 	btAlignedObjectArray<btBroadphasePair> m_rsPairs;
-	void rsReleasePairs(btBroadphaseProxy* onlyProxy = NULL);
 
 	// RocketSim: merges a pair's fresh manifold (from this tick's collision detection) into the pair's kept contacts,
 	// and gives the fresh manifold the merged points for the solver
@@ -151,6 +150,9 @@ public:
 	void rsClearContacts(const btCollisionObject* obj = NULL);
 	// Keeps the impulses the solver applied at the merged points (for warm starting the next tick)
 	void rsStoreSolvedContacts();
+
+	// RocketSim: frees the pairs' collision algorithms (and their manifolds); all pairs, or those of one proxy
+	void rsReleasePairs(btBroadphaseProxy* onlyProxy = NULL);
 
 	// RocketSim: the pairs found by the last collision detection, when it used the btRSBroadphase path
 	const btAlignedObjectArray<btBroadphasePair>& getRSPairs() const

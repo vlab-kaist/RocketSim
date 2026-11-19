@@ -102,8 +102,10 @@ void BoostPad::_CheckCollide(Car* car, float tickTime) {
 	bool colliding = inCylinder || (stays && HitboxOverlapsBox(car, carPosBT, _posBT, _boxHalfBT));
 
 	// The car already on the pad keeps it, otherwise the first car to arrive gets it
-	if (colliding && (stays || !_internalState.curLockedCar))
+	if (colliding && (stays || !_internalState.curLockedCar)) {
 		_internalState.curLockedCar = car;
+		_MarkBusy();
+	}
 }
 
 bool BoostPad::_PostTickUpdate(float tickTime, const MutatorConfig& mutatorConfig) {

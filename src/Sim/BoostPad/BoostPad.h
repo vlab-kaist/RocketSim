@@ -42,8 +42,18 @@ public:
 
 	BoostPadState _internalState;
 
+	// The arena's bit for this pad: set while the pad may have something to update each tick (see Arena::Step).
+	// Writes to the state go through SetState() (or are followed by _MarkBusy()).
+	uint64_t* _busyWord = nullptr;
+	uint64_t _busyBit = 0;
+	void _MarkBusy() { if (_busyWord) *_busyWord |= _busyBit; }
+	// Active, no cooldown and no car on it, this tick or the last: its tick updates change nothing
+	bool _IsIdle() const {
+		return _internalState.isActive && _internalState.cooldown == 0 && !_internalState.curLockedCar && !_internalState.prevLockedCarID;
+	}
+
 	BoostPadState GetState() const { return _internalState; }
-	void SetState(const BoostPadState& state) { _internalState = state; }
+	void SetState(const BoostPadState& state) { _internalState = state; _MarkBusy(); }
 
 	// For construction by Arena
 	static BoostPad* _AllocBoostPad();

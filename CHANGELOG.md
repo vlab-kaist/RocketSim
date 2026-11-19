@@ -6,6 +6,20 @@ Newest first. Accuracy numbers are against the real-game recordings in `validati
 real game for the whole run. Speed numbers are single-thread `bench/` ticks/s on the v2 server.
 Bench checksums identify the exact physics; they change whenever results change.
 
+## 2026-11-20
+
+- **Speed: less memory per arena to bring into the cache** (results unchanged: checksums 1v1
+  77990a4158c809c1, 3v3 dc558895c384ceb9, ball 3671f42596a75fbd). The collision algorithms, manifolds and
+  the solver's and island manager's buffers only live within a tick, so the arenas stepped on one thread now
+  share that thread's (`btDiscreteDynamicsWorld::rsBeginThreadScratch()`/`rsEndThreadScratch()`, around
+  `Arena::Step()`; the pairs are released at the end of `Step()` instead of the start of the next tick). Idle
+  boost pads are skipped by the per-tick pad updates (`Arena::_boostPadsBusy`; `BoostPad::SetState()` marks a
+  pad). Memory per 1v1 arena 540 -> 290 KB (LIGHT 280 -> 165 KB), L2 misses per tick 47 -> 37 with many
+  arenas per core; 1v1 on one core with 1024 arenas ~10% faster, 64-256 arenas 2-3%, 3v3 ~3%. Internal:
+  code that writes `BoostPad::_internalState` directly has to call `BoostPad::_MarkBusy()`.
+- docs: the broadphase static tables were already shared between arenas (the 2026-11-19 note said 140 KB
+  per arena).
+
 ## 2026-11-19
 
 - **Boost pad pickups as the game** (v3's rule). A car arrives on a pad with its center, taken half a tick

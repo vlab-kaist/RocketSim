@@ -116,6 +116,8 @@ public:
 	bool ownsBall = true; // If true, deleting this arena instance deletes the ball
 	
 	std::vector<BoostPad*> _boostPads;
+	// A bit per pad (in _boostPads order): the pads Step() updates (see BoostPad::_IsIdle())
+	std::vector<uint64_t> _boostPadsBusy;
 	bool ownsBoostPads = true; // If true, deleing this arena instance deletes all boost pads
 	
 	BoostPadGrid _boostPadGrid;

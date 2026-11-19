@@ -66,28 +66,40 @@ Python binding tests (`python-mtheall/unit_test.py`, run from the directory hold
   whole stalls the load. Build vectors from scalars in registers (`btVector3(x, y, z)` does), copy structs
   before writing fresh fields into them. On Zen 4 count them with
   `perf stat -e ls_bad_status2.stli_other` (Intel: `ld_blocks.store_forward`).
-- Cache footprint (2026-11-19, `bench_par <meshes> 1 N` on one core, 8 ticks per arena visit as in training).
-  An arena takes about 540 KB (3v3 560 KB; `ArenaMemWeightMode::LIGHT` 280 KB, but the part it saves is
-  never touched while stepping). The biggest pieces are the collision algorithm/manifold pools (~280 KB), the
-  broadphase cells (~200 KB), the broadphase static table and static cells (~140 KB) and the `Arena` object
-  itself (23 KB, mostly the dispatcher's algorithm table); `Car` is 2.4 KB, `Ball` 1.2 KB, `BoostPad` 128 B.
-  The meshes and their BVHs (~2.5 MB) are shared by all arenas. Cost per tick (1v1, Ryzen 7950X, L2 1 MB,
-  L3 32 MB per 8 cores):
+- Cache footprint (`bench_par <meshes> 1 N` on one core, 8 ticks per arena visit as in training). Memory per
+  1v1 arena: 290 KB (3v3 310 KB, `ArenaMemWeightMode::LIGHT` 165 KB); before the thread scratch below 540 KB.
+  The biggest pieces left are the broadphase cells (~150 KB, mostly never touched), the broadphase handle
+  pool (57 KB, a few handles used) and the `Arena` object itself (23 KB, mostly the dispatcher's algorithm
+  table); `Car` is 2.4 KB, `Ball` 1.2 KB, `BoostPad` 128 B. Shared by all arenas: the meshes and their BVHs
+  (~2.5 MB) and the broadphase static tables and static cell lists (cached by `_BuildStaticTable()` and
+  `_GetStaticCells()`). What costs is not the memory an arena owns but the lines a visit touches: ~37 L2
+  misses per tick in 1v1 (~300 lines, ~19 KB per 8-tick visit), spread over the cars, wheels, ball, rigid
+  bodies, proxies, the `Arena` object and the cells near the bodies (no source line above 3.5% of the DRAM
+  fills). Cost per tick (1v1, Ryzen 7950X, L2 1 MB, L3 32 MB per 8 cores; 2026-11-20):
 
-  | arenas per core | fills per tick | cycles per tick |
-  |---|---|---|
-  | 1-4 (in L2) | ~1 L2 miss | 7,200 |
-  | 16-256 (in L3) | ~47 lines from L3 | 7,500-7,700 (+5%) |
-  | 1024 (550 MB) | ~15-30 lines from DRAM | 8,000-9,000 (+15-26%, depends on what else uses the L3) |
+  | arenas per core | L2 misses per tick | lines from DRAM per tick | cycles per tick |
+  |---|---|---|---|
+  | 1 | 0.4 | 0 | 6,650 |
+  | 64 | 36 | 0.2 | 6,840 |
+  | 256 | 37 | 1.1-1.5 | 6,960-7,120 |
+  | 1024 | 37 | 16-20 | 7,800-8,000 |
 
-  3v3: 18.8k cycles for 1 arena, 22.1k for 1024 (+18%). The pod's Xeon 8462Y+ (L2 2 MB, L3 1.9 MB per
-  core), single core: 1v1 310-330k ticks/s up to 64 arenas, 247k at 256, 240k at 1024 (-25%); 3v3 -18% at
-  1024 (with other users' jobs on the machine). Training configs run 64-128 arenas per thread, so they run
-  in the DRAM regime on both machines; the bandwidth is low (~1 GB/s per core), the cost is latency.
-  The misses are spread over many structures (no source line above 3.5% of the DRAM fills). Tried without
-  effect: prefetching the next arena's cars, ball, wheels, pads and `Arena` object while the current one
-  steps; transparent huge pages for the heap (`GLIBC_TUNABLES=glibc.malloc.hugetlb=1`; removes the TLB
-  misses, ~3 page walks per tick, but no faster).
+  The same before the thread scratch and the idle pads: 47-48 L2 misses per tick; 7,000 / 7,190-7,340 /
+  8,600-9,070 cycles at 64 / 256 / 1024 arenas. 3v3: 85 -> 73 L2 misses per tick, ~3% faster at 256-1024
+  arenas. The pod's Xeon 8462Y+ (L2 2 MB, L3 1.9 MB per core; before these changes), single core: 1v1
+  310-330k ticks/s up to 64 arenas, 247k at 256, 240k at 1024 (-25%); 3v3 -18% at 1024 (with other users'
+  jobs on the machine). Training configs run 64-128 arenas per thread; the bandwidth is low (~1 GB/s per
+  core), the cost is latency.
+- Thread scratch: the collision algorithms, manifolds and the solver's and island manager's buffers only live
+  within a tick (the pairs are released at the end of `Step()`; contacts kept across ticks are in
+  `m_rsContacts`), so the arenas stepped on one thread share that thread's
+  (`btDiscreteDynamicsWorld::rsBeginThreadScratch()`); an arena's own pools are 16 entries. Idle boost pads
+  (active, no cooldown, no car this tick or the last) are skipped by the per-tick pad updates; a pad's bit in
+  `Arena::_boostPadsBusy` is set by `SetState()`, by a car getting on it and by `LoadSnapshot()`, so code that
+  writes `BoostPad::_internalState` directly has to call `_MarkBusy()`.
+- Tried without effect: prefetching the next arena's cars, ball, wheels, pads and `Arena` object while the
+  current one steps; transparent huge pages for the heap (`GLIBC_TUNABLES=glibc.malloc.hugetlb=1`; removes
+  the TLB misses, ~3 page walks per tick, but no faster).
 
 ## Validation
 

@@ -56,6 +56,26 @@ protected:
 
 	bool m_ownsIslandManager;
 	bool m_ownsConstraintSolver;
+
+	// RocketSim: the world's own solver, island manager, island callback and pools while it uses its thread's
+	struct RSThreadScratch;
+	RSThreadScratch* m_rsScratch = NULL;
+	InplaceSolverIslandCallback* m_rsOwnIslandCallback = NULL;
+	btSequentialImpulseConstraintSolver* m_rsOwnSolver = NULL;
+	btSimulationIslandManager* m_rsOwnIslandManager = NULL;
+	class btPoolAllocator* m_rsOwnAlgorithmPool = NULL;
+	class btPoolAllocator* m_rsOwnManifoldPool = NULL;
+
+public:
+	// RocketSim: the collision algorithms, the manifolds and the solver's and island manager's buffers only live
+	// within a tick (the pairs are released at its end; the contacts kept across ticks are in m_rsContacts), so
+	// the worlds stepped on one thread can share that thread's: less memory per world to bring into the cache.
+	// Between rsBeginThreadScratch() and rsEndThreadScratch() the world uses the thread's; a world stepped
+	// from inside another world's tick on the same thread keeps its own (returns false).
+	bool rsBeginThreadScratch();
+	void rsEndThreadScratch();
+
+protected:
 	bool m_synchronizeAllMotionStates;
 	bool m_applySpeculativeContactRestitution;
 
