@@ -66,6 +66,28 @@ Python binding tests (`python-mtheall/unit_test.py`, run from the directory hold
   whole stalls the load. Build vectors from scalars in registers (`btVector3(x, y, z)` does), copy structs
   before writing fresh fields into them. On Zen 4 count them with
   `perf stat -e ls_bad_status2.stli_other` (Intel: `ld_blocks.store_forward`).
+- Cache footprint (2026-11-19, `bench_par <meshes> 1 N` on one core, 8 ticks per arena visit as in training).
+  An arena takes about 540 KB (3v3 560 KB; `ArenaMemWeightMode::LIGHT` 280 KB, but the part it saves is
+  never touched while stepping). The biggest pieces are the collision algorithm/manifold pools (~280 KB), the
+  broadphase cells (~200 KB), the broadphase static table and static cells (~140 KB) and the `Arena` object
+  itself (23 KB, mostly the dispatcher's algorithm table); `Car` is 2.4 KB, `Ball` 1.2 KB, `BoostPad` 128 B.
+  The meshes and their BVHs (~2.5 MB) are shared by all arenas. Cost per tick (1v1, Ryzen 7950X, L2 1 MB,
+  L3 32 MB per 8 cores):
+
+  | arenas per core | fills per tick | cycles per tick |
+  |---|---|---|
+  | 1-4 (in L2) | ~1 L2 miss | 7,200 |
+  | 16-256 (in L3) | ~47 lines from L3 | 7,500-7,700 (+5%) |
+  | 1024 (550 MB) | ~15-30 lines from DRAM | 8,000-9,000 (+15-26%, depends on what else uses the L3) |
+
+  3v3: 18.8k cycles for 1 arena, 22.1k for 1024 (+18%). The pod's Xeon 8462Y+ (L2 2 MB, L3 1.9 MB per
+  core), single core: 1v1 310-330k ticks/s up to 64 arenas, 247k at 256, 240k at 1024 (-25%); 3v3 -18% at
+  1024 (with other users' jobs on the machine). Training configs run 64-128 arenas per thread, so they run
+  in the DRAM regime on both machines; the bandwidth is low (~1 GB/s per core), the cost is latency.
+  The misses are spread over many structures (no source line above 3.5% of the DRAM fills). Tried without
+  effect: prefetching the next arena's cars, ball, wheels, pads and `Arena` object while the current one
+  steps; transparent huge pages for the heap (`GLIBC_TUNABLES=glibc.malloc.hugetlb=1`; removes the TLB
+  misses, ~3 page walks per tick, but no faster).
 
 ## Validation
 
