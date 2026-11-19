@@ -2,8 +2,9 @@
 
 RS_NS_START
 
-void BoostPadGrid::CheckCollision(Car* car) {
-	if (car->_internalState.isDemoed || car->_internalState.boost >= RLConst::BOOST_MAX)
+void BoostPadGrid::CheckCollision(Car* car, float tickTime) {
+	// (Cars with full boost are checked too: they stay on a pad without taking it)
+	if (car->_internalState.isDemoed)
 		return;
 
 	Vec carPos = car->_rigidBody.getWorldTransform().m_origin * BT_TO_UU;
@@ -18,7 +19,7 @@ void BoostPadGrid::CheckCollision(Car* car) {
 		for (int j = RS_MAX(indexY - 1, 0); j <= RS_MIN(indexY + 1, CELLS_Y - 1); j++) {
 			BoostPad* pad = pads[i][j];
 			if (pad) {
-				pad->_CheckCollide(car);
+				pad->_CheckCollide(car, tickTime);
 			}
 		}
 	}

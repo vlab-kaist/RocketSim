@@ -45,6 +45,10 @@ for the same binary and the same libm; across compilers or libm versions they ma
   kept points are refreshed, the tick's fresh points merged in (nearby point replaced, inheriting its
   normal impulse; at most 4), and the solver warm-starts from them. Car-car contacts are not kept (the
   per-tick contacts already match the game's bumps; keeping them adds impulses after cars part).
+- Boost pads (v3's rule, matched to the game's pickup ticks): a car arrives on a pad when its center, taken
+  half a tick back, is in the pad's cylinder (radius 176 small / 208 big, +-95 high); it stays on the pad
+  while that holds or its hitbox overlaps the pad's box (96/160, +-64 around the pad). One car per pad (the
+  one already on it, else the first to arrive); with several cars on one pad v3 can give it to another one.
 - New car states start with `flipTime = 1` (past the 0.3 s pitch lock): the game doesn't lock pitch at
   kickoffs or after a state set.
 
@@ -78,12 +82,15 @@ cd validation && .venv/bin/python -m rlval.compare recordings/real-2026-11-17 re
     recordings/real-2026-11-18-pitchlock recordings/real-2026-11-18-carcar recordings/real-2026-11-19-roof --backends cpp
 ```
 
-Status (7bfbf026): 879 valid recordings (scripted scenarios), median car position error at 1 s 0.01 uu,
-808 never diverge past 10 uu, demo outcomes match the game in all of them. Random solo play
+Status (boost pad rule): 879 valid recordings (scripted scenarios), median car position error at 1 s 0.01 uu,
+812 never diverge past 10 uu, demo outcomes match the game in all of them. Random solo play
 (`real-2026-11-19-random`, 110): median 0.05 uu at 1 s, 66 never diverge (RocketSim v3: 4.69 uu, 39).
 
 Planner chains (`python -m rlval.chain`, the planner's real-game aerial pass/shot recordings): cars
 within 0.05 uu before the first touch, touch ticks as in the game.
+
+Boost pads (`python -m rlval.pads`, pickups in the recordings): 99/137 on the same tick as the game (v3 98),
+the rest mostly +-1 tick; the rule applied to the game's own recorded positions gives the same split.
 
 Goals: `IsBallScored()` scores on the same tick as the game in all 42 goal recordings.
 

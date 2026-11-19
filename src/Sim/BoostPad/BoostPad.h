@@ -38,7 +38,7 @@ public:
 	BoostPadConfig config;
 
 	Vec _posBT;
-	Vec _boxMinBT, _boxMaxBT;
+	btVector3 _boxHalfBT;
 
 	BoostPadState _internalState;
 
@@ -49,7 +49,8 @@ public:
 	static BoostPad* _AllocBoostPad();
 	void _Setup(const BoostPadConfig& config);
 
-	void _CheckCollide(Car* car);
+	// Puts the car on the pad if it touches it (tested at its position half a tick back)
+	void _CheckCollide(Car* car, float tickTime);
 
 	void _PreTickUpdate(float tickTime);
 	bool _PostTickUpdate(float tickTime, const MutatorConfig& mutatorConfig);

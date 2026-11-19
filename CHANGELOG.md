@@ -8,6 +8,14 @@ Bench checksums identify the exact physics; they change whenever results change.
 
 ## 2026-11-19
 
+- **Boost pad pickups as the game** (v3's rule). A car arrives on a pad with its center, taken half a tick
+  back, in the cylinder (small pads 144 -> 176 uu); it stays on the pad while its center is in the cylinder
+  or its hitbox (an oriented box) overlaps the pad's box (small 120 -> 96 uu, centered on the pad, +-64 uu
+  high); a car with full boost stays on a pad without taking it. Pickups on the same tick as the game
+  8/137 -> 99/137 (v3 98), missed 16 -> 6 (`python -m rlval.pads`). Never diverging 808 -> 812 (of 879).
+  Checksums: 1v1 77990a4158c809c1, 3v3 dc558895c384ceb9 (ball only unchanged). Internal:
+  `BoostPad::_CheckCollide(car, tickTime)`, `BoostPadGrid::CheckCollision(car, tickTime)`.
+  rlval: jobs start from the recorded pad cooldowns (cpp and v3 backends).
 - Python: a `BoostPad` object from `Arena.get_boost_pads()` (and from a clone) keeps its arena alive, as
   cars and the ball do; it used to read freed memory once the arena was gone.
 - rlval: `rlval.chain` replays the planner's real-game chain recordings (E22, with `last_input`). On the

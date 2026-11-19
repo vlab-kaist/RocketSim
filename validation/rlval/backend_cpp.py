@@ -79,6 +79,16 @@ def replay(spec: dict, name: str = "cpp") -> dict:
     bs.rot_mat = _rotmat(b["rot"])
     arena.ball.set_state(bs)
 
+    if spec.get("pads"):
+        # The spec lists the pads in RLBot order (sorted by y, then x), which swaps two pairs against RocketSim's
+        sim_pads = arena.get_boost_pads()
+        rlbot_order = sorted(range(len(sim_pads)), key=lambda j: (sim_pads[j].get_pos().y, sim_pads[j].get_pos().x))
+        for cooldown, j in zip(spec["pads"], rlbot_order):
+            if cooldown > 0:
+                ps = sim_pads[j].get_state()
+                ps.is_active, ps.cooldown = False, float(cooldown)
+                sim_pads[j].set_state(ps)
+
     events: list[dict] = []
     step_index = [0]
 

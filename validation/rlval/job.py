@@ -173,6 +173,10 @@ def build_job(rec: Recording, delay: int = 0, start: int | None = None, max_step
         "ball": ball,
         "steps": steps,
     }
+    if rec.pad_active is not None and rec.pad_timer is not None and len(rec.pad_active):
+        # Pad cooldowns (seconds left, 0 = active) in RLBot pad order (sorted by y, then x)
+        active, timer = np.asarray(rec.pad_active[start], bool), np.asarray(rec.pad_timer[start], np.float64)
+        spec["pads"] = [0.0 if a else float(t) for a, t in zip(active, timer)]
     return Job(spec=spec, start=start, indices=np.array(indices, dtype=np.int64))
 
 

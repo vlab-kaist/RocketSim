@@ -7,7 +7,7 @@
 use std::io::{Read, Write};
 
 use rocketsim::{
-    Arena, ArenaConfig, ArenaEvent, BallState, CarBodyConfig, CarControls, CarCore, GameMode, Mat3A, MutatorConfig,
+    Arena, ArenaConfig, ArenaEvent, BallState, BoostPadState, CarBodyConfig, CarControls, CarCore, GameMode, Mat3A, MutatorConfig,
     PhysState, Team, Vec3A,
 };
 use serde::{Deserialize, Serialize};
@@ -52,6 +52,9 @@ struct Job {
     cars: Vec<CarSpec>,
     ball: BallSpec,
     steps: Vec<Step>,
+    /// Boost pad cooldowns at the start (seconds, 0 = active), in RLBot pad order
+    #[serde(default)]
+    pads: Option<Vec<f32>>,
 }
 
 #[derive(Serialize)]
@@ -134,6 +137,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         phys: phys(job.ball.pos, job.ball.rot, job.ball.vel, job.ball.ang_vel),
         ..BallState::DEFAULT
     });
+
+    if let Some(pads) = &job.pads {
+        for (idx, &cooldown) in pads.iter().enumerate().take(arena.num_boost_pads()) {
+            arena.set_boost_pad_state(idx, BoostPadState { cooldown, touching_car_idxs: Vec::new() });
+        }
+    }
 
     let num_cars = job.cars.len();
     let mut out = Output { backend: "v3".to_string(), ball: Vec::new(), cars: Vec::new(), events: Vec::new() };

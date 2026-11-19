@@ -64,6 +64,12 @@ python -m rlval.compare recordings/ --backends cpp v3 --fit-delay --csv result.c
   `--fit-delay`는 -1..4를 모두 시도해 녹화별로 가장 잘 맞는 값을 고른다.
 - 녹화에 demo가 있었는지와 시뮬레이터가 demo를 냈는지를 함께 보여 준다.
 
+boost pad 획득 틱은 따로 비교한다(차의 boost가 오르는 틱, 녹화의 pad cooldown에서 시작).
+
+```sh
+python -m rlval.pads recordings/real-2026-11-17 recordings/real-2026-11-19-random --backends cpp v3 -v
+```
+
 planner의 실게임 연쇄 타격 기록(`rocket-league-planner` `experiments/rlbot_chain.py`가 남기는
 `results/rlbot_loop/*.npz`, `last_input`이 있는 것)은 따로 비교한다.
 

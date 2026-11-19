@@ -253,16 +253,17 @@ namespace RLConst {
 	}
 
 	namespace BoostPads {
-		// Mostly from a Rocket Science video: https://www.youtube.com/watch?v=xgfa-qZyInw
-		
+		// Pickup volumes as in RocketSim v3 (matched to the game's pickup ticks): a car arrives on a pad with its
+		// center in the cylinder, and stays on it while its hitbox overlaps the box (half extents
+		// BOX_RAD, BOX_RAD, BOX_HEIGHT around the pad) or its center is in the cylinder
 		constexpr float
 			CYL_HEIGHT = 95,
 			CYL_RAD_BIG = 208,
-			CYL_RAD_SMALL = 144,
+			CYL_RAD_SMALL = 176,
 
 			BOX_HEIGHT = 64,
 			BOX_RAD_BIG = 160,
-			BOX_RAD_SMALL = 120,
+			BOX_RAD_SMALL = 96,
 
 			COOLDOWN_BIG = 10,
 			COOLDOWN_SMALL = 4,
