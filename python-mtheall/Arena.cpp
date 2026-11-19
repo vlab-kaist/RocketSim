@@ -867,7 +867,8 @@ int Arena::Init (Arena *self_, PyObject *args_, PyObject *kwds_) noexcept
 			if (!ref)
 				throw -1;
 
-			ref->pad = pad;
+			ref->arena = arena; // keeps the arena alive while the pad object is
+			ref->pad   = pad;
 			boostPads.emplace (pad, ref);
 			boostPadsByIndex.emplace_back (std::move (ref));
 		}
@@ -1636,7 +1637,8 @@ PyObject *Arena::Clone (Arena *self_, PyObject *args_, PyObject *kwds_) noexcept
 			if (!ref)
 				return PyErr_NoMemory ();
 
-			ref->pad = pad;
+			ref->arena = arena; // keeps the arena alive while the pad object is
+			ref->pad   = pad;
 			boostPads.emplace (pad, ref);
 			boostPadsByIndex.emplace_back (std::move (ref));
 		}

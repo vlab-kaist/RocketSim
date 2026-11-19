@@ -48,6 +48,10 @@ for the same binary and the same libm; across compilers or libm versions they ma
 - New car states start with `flipTime = 1` (past the 0.3 s pitch lock): the game doesn't lock pitch at
   kickoffs or after a state set.
 
+Python binding tests (`python-mtheall/unit_test.py`, run from the directory holding `collision_meshes`):
+84/86 pass. `TestCarConfig.test_create` checks upstream's hitbox sizes (this fork uses v3's) and
+`TestArena.test_goal_event` is a scripted shot that no longer scores with this fork's physics.
+
 ## Speed notes
 
 - Profile with `perf record` on `build-bench/bench` (add `-g` to the flags for source lines). The profile is
@@ -77,6 +81,9 @@ cd validation && .venv/bin/python -m rlval.compare recordings/real-2026-11-17 re
 Status (7bfbf026): 879 valid recordings (scripted scenarios), median car position error at 1 s 0.01 uu,
 808 never diverge past 10 uu, demo outcomes match the game in all of them. Random solo play
 (`real-2026-11-19-random`, 110): median 0.05 uu at 1 s, 66 never diverge (RocketSim v3: 4.69 uu, 39).
+
+Planner chains (`python -m rlval.chain`, the planner's real-game aerial pass/shot recordings): cars
+within 0.05 uu before the first touch, touch ticks as in the game.
 
 Goals: `IsBallScored()` scores on the same tick as the game in all 42 goal recordings.
 

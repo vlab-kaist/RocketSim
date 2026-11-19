@@ -8,6 +8,12 @@ Bench checksums identify the exact physics; they change whenever results change.
 
 ## 2026-11-19
 
+- Python: a `BoostPad` object from `Arena.get_boost_pads()` (and from a clone) keeps its arena alive, as
+  cars and the ball do; it used to read freed memory once the arena was gone.
+- rlval: `rlval.chain` replays the planner's real-game chain recordings (E22, with `last_input`). On the
+  first 10: cars 0.05 uu off before the first touch, touch ticks the same as the game (10/10, 9/10 for the
+  second), goal outcome 10/10. The earlier records without `last_input` diverged only through input timing
+  (the inputs sent reached the game 0-3 ticks late; replaying the input that was applied matched to 0.04 uu).
 - **Speed: no stalled store forwarding** (results unchanged, checksums the same). Vectors written one float
   at a time and then read as a whole (a 16- or 64-byte load over several smaller stores) can't be forwarded
   and wait ~15 cycles; there were ~330 per 1v1 tick. `btVector3(x,y,z)`/`setValue` build in a register
