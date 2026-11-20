@@ -92,7 +92,8 @@ Exact copies are `Arena::Clone()` (Python `clone()`) and snapshots.
 
   The same before the thread scratch and the idle pads: 47-48 L2 misses per tick; 7,000 / 7,190-7,340 /
   8,600-9,070 cycles at 64 / 256 / 1024 arenas. 3v3: 85 -> 73 L2 misses per tick, ~3% faster at 256-1024
-  arenas. The pod's Xeon 8462Y+ (L2 2 MB, L3 1.9 MB per core; before these changes), single core: 1v1
+  arenas. After the static meshes left the per-tick loops (2026-11-21): ~30 L2 misses per tick, 6,380 cycles at 64
+  arenas (8,400-7,900 at 1024, with other jobs on the machine). The pod's Xeon 8462Y+ (L2 2 MB, L3 1.9 MB per core; before these changes), single core: 1v1
   310-330k ticks/s up to 64 arenas, 247k at 256, 240k at 1024 (-25%); 3v3 -18% at 1024 (with other users'
   jobs on the machine). Training configs run 64-128 arenas per thread; the bandwidth is low (~1 GB/s per
   core), the cost is latency.
