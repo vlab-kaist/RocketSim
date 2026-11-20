@@ -58,6 +58,8 @@ Python binding tests (`python-mtheall/unit_test.py`, run from the directory hold
 
 ## Speed notes
 
+- Current speed (2026-11-21, `5f200de9`, one core of the 7950X, `bench`): 1v1 ~780k ticks/s, 3v3 ~297k, ball
+  only ~3.1M.
 - Profile with `perf record` on `build-bench/bench` (add `-g` to the flags for source lines). The profile is
   flat; the biggest single costs are wheel ray casts, compound AABBs, orientation integration and
   quantization.
@@ -112,13 +114,19 @@ open loop in this fork and in v3. Recording sets: `recordings/real-2026-11-17`, 
 with `python -m rlval.goals`).
 
 ```sh
-cd validation && .venv/bin/python -m rlval.compare recordings/real-2026-11-17 recordings/real-2026-11-18 \
-    recordings/real-2026-11-18-pitchlock recordings/real-2026-11-18-carcar recordings/real-2026-11-19-roof --backends cpp
+cd validation && .venv/bin/python -m rlval.compare recordings/* --backends cpp     # all sets, ~15 s
 ```
 
-Status (boost pad rule): 879 valid recordings (scripted scenarios), median car position error at 1 s 0.01 uu,
-812 never diverge past 10 uu, demo outcomes match the game in all of them. Random solo play
-(`real-2026-11-19-random`, 110): median 0.05 uu at 1 s, 66 never diverge (RocketSim v3: 4.69 uu, 39).
+Status (2026-11-21, `5f200de9`): all sets, 1076 valid recordings (48 more start with a demolished car and are
+skipped), median car position error at 1 s 0.01 uu, 963 never diverge past 10 uu, demo outcomes match the
+game in all of them. The scripted sets of the boost pad change (17, 18, pitchlock, carcar, roof: 879): 812
+never diverge. Random solo play (`real-2026-11-19-random`, 110): median 0.05 uu at 1 s, 66 never diverge
+(RocketSim v3: 4.69 uu, 39).
+
+Recording needs the game: `RLBotServer` runs as `vlab` in the tmux session `rlbot-server`
+(`/mnt/hdd0/rlbot-shared/start_server.sh`), and `python rlbot/start_match.py /mnt/hdd0/rlbot-shared/match.toml`
+from any account launches Rocket League through Heroic (~30 s) in vlab's desktop session. One script at a time:
+check `ss -tnp | grep 23234` for other sessions' clients (the planner's chain recorder uses the same server).
 
 Planner chains (`python -m rlval.chain`, the planner's real-game aerial pass/shot recordings): cars
 within 0.05 uu before the first touch, touch ticks as in the game.

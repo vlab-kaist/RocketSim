@@ -17,6 +17,11 @@ backend는 C++ 포크(`RocketSim` Python 모듈)와 RocketSim v3(Rust) 두 가�
 | `rlval/compare.py` | 녹화를 backend에서 재생하고 오차 표를 출력 |
 | `rlval/synth.py` | 게임 대신 시뮬레이터로 녹화를 만들어 파이프라인과 backend 간 차이를 확인 |
 | `rlval/outcomes.py` | 차 간 충돌 시나리오의 결과(demo/bump/없음)를 backend별로 나란히 출력 |
+| `rlval/pads.py` | boost pad 획득 틱을 게임과 비교 |
+| `rlval/goals.py` | 골 판정 틱을 게임과 비교 (`goal_run_tick`이 있는 녹화) |
+| `rlval/chain.py` | planner의 실게임 연쇄 타격 기록을 재생해 비교 |
+| `rlval/common.py`, `rlval/backends.py` | 패킷↔시뮬레이터 상태 변환 상수, backend 목록 |
+| `recordings/` | 실게임 녹화 세트 (목록과 결과는 `../docs/fork.md`의 Validation) |
 | `rlbot/` | 매치 설정과 매치 시작 스크립트 |
 
 ## 준비
@@ -29,7 +34,7 @@ uv venv --python 3.12 && uv pip install --prerelease allow -e . .. pytest
 - 이 디렉터리는 RocketSim 포크 안에 있다. collision mesh는 포크 옆의 `collision_meshes`(`../../collision_meshes`)를 쓴다 (`RLVAL_MESHES`로 변경 가능).
 - v3는 포크 옆의 `rocketsim-v3` checkout(ZealanL/RocketSim `v3-rust`, tag `v0.3.6`)을 path dependency로 쓰고 `native-math` feature를 켠다.
 - 포크의 다른 브랜치를 비교하려면 venv를 따로 만들어 그 브랜치를 설치한다.
-  예: `.venv-demo-final`에는 `angle-supersonic-forward-backward-forwardvel`이 들어 있다.
+  예: `.venv-demo-final`에는 `angle-supersonic-forward-backward-forwardvel` 브랜치가 들어 있다(2026-11-18의 demo 실험용).
 
 ## 실게임 녹화
 
@@ -95,5 +100,4 @@ python -m rlval.outcomes --merge outcomes/*.json
 - RLBot의 state setting은 물리 상태와 boost만 설정한다. 그래서 시나리오는 지면에 놓인 중립 상태나
   속도를 직접 준 상태에서 시작하고, 점프·flip 같은 내부 상태는 입력으로 만들어 낸다.
 - 재생 시작 시 handbrake 아날로그 값, bump cooldown, supersonic 유지 타이머 같은 숨은 상태는 기본값이다.
-- 녹화 script는 실게임에서 아직 돌려 보지 않았다. 가짜 패킷 테스트만 통과한 상태다.
 - 입력 지연은 문서화된 값이 없어 `input_delay_*` 시나리오로 측정해야 한다.
