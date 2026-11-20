@@ -52,14 +52,18 @@ for the same binary and the same libm; across compilers or libm versions they ma
 - New car states start with `flipTime = 1` (past the 0.3 s pitch lock): the game doesn't lock pitch at
   kickoffs or after a state set.
 
-Python binding tests (`python-mtheall/unit_test.py`, run from the directory holding `collision_meshes`):
-84/86 pass. `TestCarConfig.test_create` checks upstream's hitbox sizes (this fork uses v3's) and
-`TestArena.test_goal_event` is a scripted shot that no longer scores with this fork's physics.
+Python binding tests (`python-mtheall/unit_test.py`, run from the directory holding `collision_meshes`; needs
+`pyglm`): 84/86 pass. `TestCarConfig.test_create` checks upstream's hitbox sizes (this fork uses v3's) and
+`TestArena.test_goal_event` is a scripted shot that no longer scores with this fork's physics. `test_pickle` and
+`test_clone_into` (random cars) fail in about half the runs, before and after the 2026-11 changes: pickling and
+`clone_into` copy through `GetState`/`SetState`, which isn't exact (positions round trip through Bullet units, last
+bit), and `SetState` traces the wheels at the new pose while `GetState` reports the contacts of the trace before
+the last integration, so `wheels_with_contact` can differ (the test helper then raises a TypeError on the tuples).
+Exact copies are `Arena::Clone()` (Python `clone()`) and snapshots.
 
 ## Speed notes
 
-- Current speed (2026-11-21, `5f200de9`, one core of the 7950X, `bench`): 1v1 ~780k ticks/s, 3v3 ~297k, ball
-  only ~3.1M.
+- Current speed (2026-11-21, one core of the 7950X, `bench`): 1v1 ~820k ticks/s, 3v3 ~305k, ball only ~3.4M.
 - Profile with `perf record` on `build-bench/bench` (add `-g` to the flags for source lines). The profile is
   flat; the biggest single costs are wheel ray casts, compound AABBs, orientation integration and
   quantization.
@@ -99,6 +103,12 @@ Python binding tests (`python-mtheall/unit_test.py`, run from the directory hold
   (active, no cooldown, no car this tick or the last) are skipped by the per-tick pad updates; a pad's bit in
   `Arena::_boostPadsBusy` is set by `SetState()`, by a car getting on it and by `LoadSnapshot()`, so code that
   writes `BoostPad::_internalState` directly has to call `_MarkBusy()`.
+- Per-tick loops go over `btCollisionWorld::rsGetDynamicObjects()` (cars and ball), not the whole collision object
+  array: the ~20 static mesh bodies per arena are 850-byte objects each, and touching one costs a cache line. Their
+  island state (tag -1, companion -2, hit fraction 1) is set when the list is rebuilt; nothing else changes it (the
+  solver maps static bodies to its fixed body without writing them).
+- Tried and dropped: skipping the rotation in the predicted transform (`predictUnconstraintMotion`, only used to
+  widen the AABBs; ~2% faster and the same checksums, but which pairs overlap could change at the margin).
 - Tried without effect: prefetching the next arena's cars, ball, wheels, pads and `Arena` object while the
   current one steps; transparent huge pages for the heap (`GLIBC_TUNABLES=glibc.malloc.hugetlb=1`; removes
   the TLB misses, ~3 page walks per tick, but no faster).

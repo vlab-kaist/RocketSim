@@ -99,6 +99,10 @@ protected:
 	// instead of in the broadphase's pair cache (see performDiscreteCollisionDetection())
 	btAlignedObjectArray<btBroadphasePair> m_rsPairs;
 
+	// RocketSim: the objects that aren't static or kinematic, in collision object array order (see rsGetDynamicObjects())
+	btAlignedObjectArray<btCollisionObject*> m_rsDynamicObjects;
+	bool m_rsDynamicObjectsChanged = true;
+
 	// RocketSim: merges a pair's fresh manifold (from this tick's collision detection) into the pair's kept contacts,
 	// and gives the fresh manifold the merged points for the solver
 	void rsMergeContacts(btPersistentManifold* fresh);
@@ -162,6 +166,17 @@ public:
 	bool usesRSPairs() const
 	{
 		return m_rsBroadphase != NULL;
+	}
+
+	// RocketSim: the objects that aren't static or kinematic, in collision object array order, so that the per-tick
+	// loops skip the arena's static meshes. Rebuilt when objects were added or removed (or rsDynamicObjectsChanged());
+	// the rebuild also sets the static objects' island state (island tag -1, companion id -2, hit fraction 1), which the
+	// island manager used to write every tick and nothing else changes.
+	const btAlignedObjectArray<btCollisionObject*>& rsGetDynamicObjects();
+	// RocketSim: call after changing an object's collision flags while it is in the world
+	void rsDynamicObjectsChanged()
+	{
+		m_rsDynamicObjectsChanged = true;
 	}
 
 	btOverlappingPairCache* getPairCache()

@@ -6,6 +6,21 @@ Newest first. Accuracy numbers are against the real-game recordings in `validati
 real game for the whole run. Speed numbers are single-thread `bench/` ticks/s on the v2 server.
 Bench checksums identify the exact physics; they change whenever results change.
 
+## 2026-11-21
+
+- **Speed: the per-tick loops skip the arena's static meshes; vector quantization** (results unchanged: checksums
+  1v1 77990a4158c809c1, 3v3 dc558895c384ceb9, ball 3671f42596a75fbd; `rlval.compare` over all sets identical line
+  for line). The island manager and `updateAabbs()` used to visit every collision object each tick, ~20 of them the
+  arena's static meshes, rewriting island state that never changes; they now go through
+  `btCollisionWorld::rsGetDynamicObjects()` (the non-static objects in array order, rebuilt when objects are added or
+  removed, which also sets the static objects' island state once). The tick-start quantization rounds the three
+  components of a position or velocity in one SSE register. One core, A/B on the same core: 1v1 780k -> 820k
+  ticks/s, 3v3 295k -> 305k, ball only 3.09M -> 3.40M; with 64-1024 arenas per core L2 misses per tick 36 -> 30.
+  Internal: code that changes a body's collision flags while it is in the world calls
+  `btCollisionWorld::rsDynamicObjectsChanged()` (`LoadSnapshot()` does).
+- docs: validation status over all recording sets (1076 recordings, 963 never diverge), how to start the game for
+  recordings, current speed; the Python tests `test_pickle`/`test_clone_into` fail now and then by design (below).
+
 ## 2026-11-20
 
 - **Speed: less memory per arena to bring into the cache** (results unchanged: checksums 1v1

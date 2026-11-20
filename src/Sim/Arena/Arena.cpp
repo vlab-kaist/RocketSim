@@ -378,11 +378,31 @@ namespace Quantize {
 		return rounded + sign * (0.1f * invScale);
 	}
 
+	// RoundVelocity/RoundPosition on all three components at once (each lane does the same IEEE operations;
+	// the vector stays in a register, no per-component stores to stall a later vector load). w is 0.
 	static btVector3 RoundVec(const btVector3& v, float scale, bool isVelocity) {
-		// Built from scalars rather than stored per component (a stalled store-forward when read as a vector)
-		if (isVelocity)
-			return btVector3(RoundVelocity(v.x(), scale), RoundVelocity(v.y(), scale), RoundVelocity(v.z(), scale));
-		return btVector3(RoundPosition(v.x(), scale), RoundPosition(v.y(), scale), RoundPosition(v.z(), scale));
+		const __m128 xyzMask = _mm_castsi128_ps(_mm_set_epi32(0, -1, -1, -1));
+		const float invScale = 1 / scale;
+		__m128 scaled = _mm_mul_ps(v.get128(), _mm_set1_ps(scale));
+		__m128 out;
+		if (isVelocity) {
+			__m128 rounded = _mm_mul_ps(_mm_cvtepi32_ps(_mm_cvttps_epi32(scaled)), _mm_set1_ps(invScale));
+			__m128 zero = _mm_setzero_ps();
+			__m128 sign = _mm_or_ps(
+				_mm_and_ps(_mm_cmpgt_ps(rounded, zero), _mm_set1_ps(1.f)),
+				_mm_and_ps(_mm_cmplt_ps(rounded, zero), _mm_set1_ps(-1.f)));
+			out = _mm_add_ps(rounded, _mm_mul_ps(sign, _mm_set1_ps(0.1f * invScale)));
+		} else {
+			// FastFloor: lanes that are 0, NaN or at least 2^31 in size are already their floor
+			__m128 x = _mm_add_ps(scaled, _mm_set1_ps(0.5f));
+			__m128 t = _mm_cvtepi32_ps(_mm_cvttps_epi32(x));
+			t = _mm_sub_ps(t, _mm_and_ps(_mm_cmpgt_ps(t, x), _mm_set1_ps(1.f)));
+			__m128 absX = _mm_and_ps(x, _mm_castsi128_ps(_mm_set1_epi32(0x7fffffff)));
+			__m128 fast = _mm_and_ps(_mm_cmplt_ps(absX, _mm_set1_ps(2147483648.f)), _mm_cmpneq_ps(x, _mm_setzero_ps()));
+			__m128 floored = _mm_or_ps(_mm_and_ps(fast, t), _mm_andnot_ps(fast, x));
+			out = _mm_mul_ps(floored, _mm_set1_ps(1 / scale));
+		}
+		return btVector3(_mm_and_ps(out, xyzMask));
 	}
 
 	struct Quat { float x, y, z, w; };
@@ -1303,6 +1323,7 @@ void Arena::LoadSnapshot(const ArenaSnapshot& in) {
 	ball->_velocityImpulseCache = in.ballVelocityImpulseCache;
 	ball->_groundStickApplied = in.ballGroundStickApplied;
 	LoadBody(ball->_rigidBody, in.ballBody);
+	_bulletWorld.rsDynamicObjectsChanged(); // LoadBody() sets the collision flags
 
 	for (size_t i = 0; i < _cars.size(); i++) {
 		Car* car = _cars[i];

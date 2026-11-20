@@ -134,6 +134,7 @@ void btCollisionWorld::addCollisionObject(btCollisionObject* collisionObject, in
 
 	collisionObject->setWorldArrayIndex(m_collisionObjects.size());
 	m_collisionObjects.push_back(collisionObject);
+	m_rsDynamicObjectsChanged = true;
 
 	//calculate new AABB
 	btTransform trans = collisionObject->getWorldTransform();
@@ -192,14 +193,11 @@ void btCollisionWorld::updateAabbs()
 {
 	BT_PROFILE("updateAabbs");
 
-	for (int i = 0; i < m_collisionObjects.size(); i++)
+	// RocketSim: static objects never move, so their aabb is only set when they are added (there are no kinematic ones)
+	const btAlignedObjectArray<btCollisionObject*>& dynamicObjects = rsGetDynamicObjects();
+	for (int i = 0; i < dynamicObjects.size(); i++)
 	{
-		btCollisionObject* colObj = m_collisionObjects[i];
-		btAssert(colObj->getWorldArrayIndex() == i);
-
-		// RocketSim: static objects never move, so their aabb is only set when they are added
-		if (colObj->isStaticObject())
-			continue;
+		btCollisionObject* colObj = dynamicObjects[i];
 
 		//only update aabb of active objects
 		if (m_forceUpdateAllAabbs || colObj->isActive())
@@ -539,6 +537,31 @@ void btCollisionWorld::removeCollisionObject(btCollisionObject* collisionObject)
 		m_collisionObjects.remove(collisionObject);
 	}
 	collisionObject->setWorldArrayIndex(-1);
+	m_rsDynamicObjectsChanged = true;
+}
+
+const btAlignedObjectArray<btCollisionObject*>& btCollisionWorld::rsGetDynamicObjects()
+{
+	if (m_rsDynamicObjectsChanged)
+	{
+		m_rsDynamicObjects.resize(0);
+		for (int i = 0; i < m_collisionObjects.size(); i++)
+		{
+			btCollisionObject* obj = m_collisionObjects[i];
+			if (obj->isStaticOrKinematicObject())
+			{
+				obj->setIslandTag(-1);
+				obj->setCompanionId(-2);
+				obj->setHitFraction(btScalar(1.));
+			}
+			else
+			{
+				m_rsDynamicObjects.push_back(obj);
+			}
+		}
+		m_rsDynamicObjectsChanged = false;
+	}
+	return m_rsDynamicObjects;
 }
 
 void btCollisionWorld::rayTestSingle(const btTransform& rayFromTrans, const btTransform& rayToTrans,

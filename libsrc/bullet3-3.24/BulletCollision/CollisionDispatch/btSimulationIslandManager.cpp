@@ -66,27 +66,23 @@ void btSimulationIslandManager::findUnions(btCollisionDispatcher* /* dispatcher 
 }
 
 #ifdef STATIC_SIMULATION_ISLAND_OPTIMIZATION
+// RocketSim: only the non-static objects are visited each tick. The static ones always end up with island tag -1,
+// companion id -2 and hit fraction 1, which btCollisionWorld::rsGetDynamicObjects() sets when the object list changes.
 void btSimulationIslandManager::updateActivationState(btCollisionWorld* colWorld, btCollisionDispatcher* dispatcher)
 {
+	const btAlignedObjectArray<btCollisionObject*>& dynamicObjects = colWorld->rsGetDynamicObjects();
+
 	// put the index into m_controllers into m_tag
-	int index = 0;
+	for (int index = 0; index < dynamicObjects.size(); index++)
 	{
-		auto& colObjArray = colWorld->getCollisionObjectArray();
-		for (int i = 0; i < colObjArray.size(); i++)
-		{
-			btCollisionObject* collisionObject = colObjArray[i];
-			//Adding filtering here
-			if (!collisionObject->isStaticOrKinematicObject())
-			{
-				collisionObject->setIslandTag(index++);
-			}
-			collisionObject->setCompanionId(-1);
-			collisionObject->setHitFraction(btScalar(1.));
-		}
+		btCollisionObject* collisionObject = dynamicObjects[index];
+		collisionObject->setIslandTag(index);
+		collisionObject->setCompanionId(-1);
+		collisionObject->setHitFraction(btScalar(1.));
 	}
 	// do the union find
 
-	initUnionFind(index);
+	initUnionFind(dynamicObjects.size());
 
 	findUnions(dispatcher, colWorld);
 }
@@ -94,26 +90,14 @@ void btSimulationIslandManager::updateActivationState(btCollisionWorld* colWorld
 void btSimulationIslandManager::storeIslandActivationState(btCollisionWorld* colWorld)
 {
 	// put the islandId ('find' value) into m_tag
+	const btAlignedObjectArray<btCollisionObject*>& dynamicObjects = colWorld->rsGetDynamicObjects();
+	for (int index = 0; index < dynamicObjects.size(); index++)
 	{
-		int index = 0;
-		int i;
-		for (i = 0; i < colWorld->getCollisionObjectArray().size(); i++)
-		{
-			btCollisionObject* collisionObject = colWorld->getCollisionObjectArray()[i];
-			if (!collisionObject->isStaticOrKinematicObject())
-			{
-				collisionObject->setIslandTag(m_unionFind.find(index));
-				//Set the correct object offset in Collision Object Array
-				m_unionFind.getElement(index).m_sz = i;
-				collisionObject->setCompanionId(-1);
-				index++;
-			}
-			else
-			{
-				collisionObject->setIslandTag(-1);
-				collisionObject->setCompanionId(-2);
-			}
-		}
+		btCollisionObject* collisionObject = dynamicObjects[index];
+		collisionObject->setIslandTag(m_unionFind.find(index));
+		//Set the correct object offset in Collision Object Array
+		m_unionFind.getElement(index).m_sz = collisionObject->getWorldArrayIndex();
+		collisionObject->setCompanionId(-1);
 	}
 }
 
