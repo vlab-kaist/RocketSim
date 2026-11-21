@@ -2,7 +2,8 @@
 
 Branch `fast-step` of `vlab-kaist/RocketSim` (forked from mtheall/RocketSim `python-dev`). It is the
 simulator of the rocket-league-reboot project: training (`rlrl-reboot`, pinned as a submodule), the
-aerial passing planner and the visualizer use it. Changes are listed in `../CHANGELOG.md`.
+aerial passing planner and the visualizer use it. Changes are listed in `../CHANGELOG.md`; open and finished improvement points are in
+`improvements.md` (checklist).
 
 Goals, in order: match the real game tick for tick (validated against recordings), exact determinism
 (same inputs, same results, also across threads, clones and snapshots), speed.
