@@ -80,6 +80,7 @@ class btBroadphaseInterface;
 #include "../BroadphaseCollision/btOverlappingPairCache.h"
 #include "../NarrowPhaseCollision/btPersistentManifold.h"
 #include "../../LinearMath/btAlignedObjectArray.h"
+#include "../BroadphaseCollision/btQuantizedBvh.h"
 
 ///CollisionWorld is interface and container for the collision detection
 class btCollisionWorld
@@ -484,12 +485,53 @@ public:
 		const btCollisionObject* object = NULL;
 		btVector3 normal, point;
 	};
-	/// RocketSim: the wheel rays of a car (at most 32). Same results as rayTestMulti() with
+	// RocketSim: the most rays rsWheelRays() takes
+	static constexpr int RS_WHEEL_RAYS_MAX = 8;
+	/// RocketSim: the wheel rays of a car (at most RS_WHEEL_RAYS_MAX). Same results as rayTestMulti() with
 	/// ClosestRayResultCallbacks that ignore hits closer than sqrt(minDistSq) to the ray start
 	/// (btDefaultVehicleRaycaster), but without callback objects. Returns false (and does nothing)
 	/// if the rays can't take this path (no btRSBroadphase, or a ray longer than a cell).
+	/// With caches (one per ray, kept by the caller between calls), the ray skips the walk over its cell's
+	/// static objects and the meshes' trees (see RSWheelRayCache); the results are the same.
+	struct RSWheelRayCache;
 	bool rsWheelRays(const btVector3* raysFromWorld, const btVector3* raysToWorld, int numRays, int filterGroup, int filterMask,
-					 const btCollisionObject* ignoreObj, btScalar minDistSq, RSRayHit* hits) const;
+					 const btCollisionObject* ignoreObj, btScalar minDistSq, RSRayHit* hits, RSWheelRayCache* caches = NULL) const;
+
+	/// RocketSim: what rsWheelRays() keeps for one ray between calls: the static objects of the cell the ray starts
+	/// in that pass the filter, in visiting order, and for each mesh the tree leaves overlapping a box around the ray
+	/// (RS_WHEEL_RAY_CACHE_MARGIN). The ray tests only those leaves (btQuantizedBvh::rsRayAgainstLeaves()), which
+	/// gives the triangles the tree walk would, in the same order. Rebuilt when the ray starts in another cell, the
+	/// filter or the static objects changed, or the ray's quantized aabb leaves a mesh's box. Static objects must
+	/// not move (as everywhere in RocketSim).
+	struct RSWheelRayCache
+	{
+		enum Kind
+		{
+			PLANE,  // a plane at the origin with identity basis
+			PLANE_MOVED,  // another plane (rayTestSingleInternal()'s plane test)
+			MESH,   // a mesh with a quantized tree
+			OTHER   // tested as rsWheelRays() does without the cache
+		};
+		struct Item
+		{
+			btVector3 planeNormal;  // PLANE
+			btScalar planeConstant;
+			const btCollisionObject* object;
+			int kind;
+			int firstLeaf, numLeaves;          // MESH: in leaves
+			unsigned short qMin[3], qMax[3];  // MESH: the box, quantized in the mesh's tree
+		};
+		const void* statics = NULL;  // the broadphase's static proxies and static table it was built from
+		const void* table = NULL;
+		int numStatics = -1, cellIdx = -1, filterGroup = 0, filterMask = 0;
+		// The box in world space. If every mesh has an identity basis, the mesh space is the world space shifted
+		// (monotonic per axis, as is quantizing), so a ray inside this box is inside every mesh's box.
+		btVector3 boxMin, boxMax;
+		bool meshesShifted = false;
+		btAlignedObjectArray<Item> items;
+		btAlignedObjectArray<btQuantizedBvh::RSLeaf> leaves;
+	};
+	static constexpr btScalar RS_WHEEL_RAY_CACHE_MARGIN = 2;  // Bullet units (100 uu); best of 0.5-5 on the wall bench
 
 	/// convexTest performs a swept convex cast on all objects in the btCollisionWorld, and calls the resultCallback
 	/// This allows for several queries: first hit, all hits, any hit, dependent on the value return by the callback.

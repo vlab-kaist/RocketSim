@@ -8,6 +8,17 @@ Bench checksums identify the exact physics; they change whenever results change.
 
 ## 2026-11-21
 
+- **Speed: wheel rays keep their candidate triangles between ticks** (results unchanged: checksums the same,
+  `rlval.compare` over all sets identical line for line, also with the cars on the walls). Each wheel ray keeps the
+  static objects of its cell that pass its filter and, for each mesh, the tree leaves overlapping a box 100 uu around
+  it (`btCollisionWorld::RSWheelRayCache`, in `btDefaultVehicleRaycaster`); while the ray stays in the box it tests
+  only those leaves, which gives the triangles of the tree walk in the same order (a leaf the ray passes is always
+  reached by the walk). Walls placed off the origin get the plane test directly instead of through
+  `rayTestSingle()`, and `castRays()`'s stack frame shrank from 7.7 to 2.6 KB. Cars on the walls (`bench ... wall`,
+  new): 1v1 428k -> 477k ticks/s, 3v3 151k -> 167k; on the floor (`bench`) 1v1 +2%. With many arenas per core and
+  the cars mostly on the floor, ~5 more L2 misses per tick (the caches are per car): the same speed at 64-256
+  arenas, ~2% slower at 1024.
+
 - **Speed: the per-tick loops skip the arena's static meshes; vector quantization** (results unchanged: checksums
   1v1 77990a4158c809c1, 3v3 dc558895c384ceb9, ball 3671f42596a75fbd; `rlval.compare` over all sets identical line
   for line). The island manager and `updateAabbs()` used to visit every collision object each tick, ~20 of them the

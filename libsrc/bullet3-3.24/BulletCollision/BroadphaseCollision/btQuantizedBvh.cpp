@@ -822,6 +822,62 @@ void btQuantizedBvh::reportRaysOverlappingNodex(MyMultiNodeOverlapCallback* node
 	}
 }
 
+void btQuantizedBvh::rsCollectLeaves(const unsigned short* qMin, const unsigned short* qMax, btAlignedObjectArray<RSLeaf>& leaves) const
+{
+	btAssert(m_useQuantization);
+	const int endNodeIndex = m_curNodeIndex;
+	int curIndex = 0;
+	while (curIndex < endNodeIndex)
+	{
+		const btQuantizedBvhNode* node = &m_quantizedContiguousNodes[curIndex];
+		bool overlap = testQuantizedAabbAgainstQuantizedAabb(qMin, qMax, node->m_quantizedAabbMin, node->m_quantizedAabbMax);
+		if (node->isLeafNode())
+		{
+			if (overlap)
+			{
+				RSLeaf& leaf = leaves.expandNonInitializing();
+				leaf.bounds[0] = unQuantize(node->m_quantizedAabbMin);
+				leaf.bounds[1] = unQuantize(node->m_quantizedAabbMax);
+				for (int k = 0; k < 3; k++)
+				{
+					leaf.qMin[k] = node->m_quantizedAabbMin[k];
+					leaf.qMax[k] = node->m_quantizedAabbMax[k];
+				}
+				leaf.partId = node->getPartId();
+				leaf.triangleIndex = node->getTriangleIndex();
+			}
+			curIndex++;
+		}
+		else
+		{
+			curIndex += overlap ? 1 : node->getEscapeIndex();
+		}
+	}
+}
+
+void btQuantizedBvh::rsRayAgainstLeaves(MyMultiNodeOverlapCallback* nodeCallback, const btVector3& raySource, const btVector3& rayTarget,
+	const unsigned short* qRayMin, const unsigned short* qRayMax, const RSLeaf* leaves, int numLeaves) const
+{
+	// Per-ray setup, as in reportRaysOverlappingNodex()
+	btVector3 rayDirection = (rayTarget - raySource);
+	rayDirection.safeNormalize();
+	btScalar lambdaMax = rayDirection.dot(rayTarget - raySource);
+	rayDirection[0] = rayDirection[0] == btScalar(0.0) ? btScalar(BT_LARGE_FLOAT) : btScalar(1.0) / rayDirection[0];
+	rayDirection[1] = rayDirection[1] == btScalar(0.0) ? btScalar(BT_LARGE_FLOAT) : btScalar(1.0) / rayDirection[1];
+	rayDirection[2] = rayDirection[2] == btScalar(0.0) ? btScalar(BT_LARGE_FLOAT) : btScalar(1.0) / rayDirection[2];
+	unsigned int sign[3] = { rayDirection[0] < 0.0, rayDirection[1] < 0.0, rayDirection[2] < 0.0 };
+
+	for (int i = 0; i < numLeaves; i++)
+	{
+		const RSLeaf& leaf = leaves[i];
+		if (!testQuantizedAabbAgainstQuantizedAabb(qRayMin, qRayMax, leaf.qMin, leaf.qMax))
+			continue;
+		btScalar param = 1.0;
+		if (btRayAabb2(raySource, rayDirection, sign, leaf.bounds, param, 0.0f, lambdaMax))
+			nodeCallback->processNode(leaf.partId, leaf.triangleIndex, 1u);
+	}
+}
+
 void MyMultiNodeOverlapCallback::processNode(int nodeSubPart, int nodeTriangleIndex, unsigned rayMask) {
 	const unsigned char* vertexbase;
 	int numverts;

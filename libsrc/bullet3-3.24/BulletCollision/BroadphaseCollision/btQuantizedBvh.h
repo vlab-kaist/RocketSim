@@ -348,6 +348,35 @@ public:
 	void reportRaysOverlappingNodex(MyMultiNodeOverlapCallback * nodeCallback, const btVector3* raySources, const btVector3* rayTargets, int numRays) const;
 	void reportBoxCastOverlappingNodex(btNodeOverlapCallback * nodeCallback, const btVector3& raySource, const btVector3& rayTarget, const btVector3& aabbMin, const btVector3& aabbMax) const;
 
+	// RocketSim: for the wheel ray cache (btCollisionWorld::rsWheelRays()), quantized trees only.
+	// rsCollectLeaves(): the leaf nodes whose quantized aabb overlaps the quantized box [qMin, qMax], in node order.
+	// rsRayAgainstLeaves(): of those leaves, the ones reportRaysOverlappingNodex() gives the ray, in the same order,
+	// provided the ray's quantized aabb (rsQuantizeRay()) lies inside [qMin, qMax]. A leaf the ray passes is always
+	// reached by the walk, since every node on the way contains it (in quantized space, and the float ray-box test
+	// is monotonic in the box), so testing the leaves alone gives the same triangles.
+	void rsQuantizeBox(const btVector3& aabbMin, const btVector3& aabbMax, unsigned short* qMin, unsigned short* qMax) const
+	{
+		quantizeWithClamp(qMin, aabbMin, 0);
+		quantizeWithClamp(qMax, aabbMax, 1);
+	}
+	void rsQuantizeRay(const btVector3& raySource, const btVector3& rayTarget, unsigned short* qMin, unsigned short* qMax) const
+	{
+		btVector3 rayAabbMin = raySource;
+		btVector3 rayAabbMax = raySource;
+		rayAabbMin.setMin(rayTarget);
+		rayAabbMax.setMax(rayTarget);
+		rsQuantizeBox(rayAabbMin, rayAabbMax, qMin, qMax);
+	}
+	struct RSLeaf
+	{
+		btVector3 bounds[2];  // unQuantize() of the quantized bounds
+		unsigned short qMin[3], qMax[3];
+		int partId, triangleIndex;
+	};
+	void rsCollectLeaves(const unsigned short* qMin, const unsigned short* qMax, btAlignedObjectArray<RSLeaf>& leaves) const;
+	void rsRayAgainstLeaves(MyMultiNodeOverlapCallback * nodeCallback, const btVector3& raySource, const btVector3& rayTarget,
+		const unsigned short* qRayMin, const unsigned short* qRayMax, const RSLeaf* leaves, int numLeaves) const;
+
 	SIMD_FORCE_INLINE void quantize(unsigned short* out, const btVector3& point, int isMax) const
 	{
 		btAssert(m_useQuantization);

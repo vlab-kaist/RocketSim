@@ -1,7 +1,9 @@
 // Single-thread throughput and determinism check for the simulator core.
 //
-//   bench <meshes> [cars_per_team=1] [seconds=600] [mode=soccar|ball]
+//   bench <meshes> [cars_per_team=1] [seconds=600] [mode=soccar|ball|wall]
 //
+// wall: every 2 s the cars are put on the side walls (driving along them, full throttle, no jumps), so that
+// their wheels are on the arena meshes rather than the floor plane.
 // Every 8 ticks each car gets new random controls from a fixed-seed generator,
 // and the arena goes back to a kickoff every 10 s of game time. The printed
 // checksum hashes the full car and ball state every 120 ticks, so any change
@@ -46,6 +48,7 @@ int main(int argc, char** argv) {
 	int perTeam = argc > 2 ? std::atoi(argv[2]) : 1;
 	int seconds = argc > 3 ? std::atoi(argv[3]) : 600;
 	bool ballOnly = argc > 4 && std::string(argv[4]) == "ball";
+	bool onWalls = argc > 4 && std::string(argv[4]) == "wall";
 
 	RocketSim::Init(argv[1], true);
 	ArenaConfig cfg = {};
@@ -69,6 +72,19 @@ int main(int argc, char** argv) {
 				arena->ball->SetState(bs);
 			}
 		}
+		if (onWalls && tick % 240 == 0)
+			for (Car* c : cars) {
+				// On a side wall: up points into the field, forward along the wall, at a random place and heading
+				float side = next_bit(2) ? 1.f : -1.f;
+				float heading = (float)(next_u32() % 628) / 100.f;
+				CarState cs = CarState();
+				cs.pos = Vec(side * (4096.f - 17.f), (float)(next_u32() % 6000) - 3000.f, 300.f + (float)(next_u32() % 1200));
+				Vec up(-side, 0, 0);
+				Vec forward(0, cosf(heading), sinf(heading));
+				cs.rotMat = RotMat(forward, up.Cross(forward), up);
+				cs.vel = forward * 1000.f;
+				c->SetState(cs);
+			}
 		if (tick % 8 == 0)
 			for (Car* c : cars) {
 				CarControls cc;
@@ -80,6 +96,11 @@ int main(int argc, char** argv) {
 				cc.jump = next_bit(6);
 				cc.boost = next_bit(3);
 				cc.handbrake = next_bit(8);
+				if (onWalls) {
+					cc.throttle = 1;
+					cc.pitch = cc.yaw = cc.roll = 0;
+					cc.jump = cc.handbrake = false;
+				}
 				c->controls = cc;
 			}
 		arena->Step(1);

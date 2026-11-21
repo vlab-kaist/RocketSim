@@ -77,49 +77,22 @@ void* btDefaultVehicleRaycaster::castRay(const btVector3& from, const btVector3&
 	return rayCallback.getResult(result);
 }
 
-void btDefaultVehicleRaycaster::castRays(const btVector3* from, const btVector3* to, int numRays, const btCollisionObject* ignoreObj, btVehicleRaycasterResult* results, void** hitObjects)
+// The general path, through rayTestMulti() and callback objects (kept out of castRays() so that its stack frame stays small)
+#ifdef _MSC_VER
+#define RS_NOINLINE __declspec(noinline)
+#else
+#define RS_NOINLINE __attribute__((noinline))
+#endif
+static RS_NOINLINE void castRaysGeneral(btDynamicsWorld* world, const btVector3* from, const btVector3* to, int numRays, const btCollisionObject* ignoreObj,
+	btScalar minHitDistSq, int filterGroup, btVehicleRaycaster::btVehicleRaycasterResult* results, void** hitObjects)
 {
-	constexpr int MAX_RAYS = 8;
-
-	// RocketSim: the direct path, with the same results
-	if (numRays <= MAX_RAYS)
-	{
-		btCollisionWorld::RSRayHit hits[MAX_RAYS];
-		if (m_dynamicsWorld->rsWheelRays(from, to, numRays, btBroadphaseProxy::CharacterFilter | addedFilterMask, btBroadphaseProxy::AllFilter, ignoreObj, m_minHitDistSq, hits))
-		{
-			for (int i = 0; i < numRays; i++)
-			{
-				hitObjects[i] = 0;
-				// MinDistRayResultCallback::getResult()
-				if (hits[i].object)
-				{
-					const btRigidBody* body = btRigidBody::upcast(hits[i].object);
-					if (body && body->hasContactResponse())
-					{
-						results[i].m_hitPointInWorld = hits[i].point;
-						results[i].m_hitNormalInWorld = hits[i].normal;
-						results[i].m_hitNormalInWorld.normalize();
-						results[i].m_distFraction = hits[i].fraction;
-						hitObjects[i] = (void*)body;
-					}
-				}
-			}
-			return;
-		}
-	}
-
-	if (numRays > MAX_RAYS)
-	{
-		btVehicleRaycaster::castRays(from, to, numRays, ignoreObj, results, hitObjects);
-		return;
-	}
-
+	constexpr int MAX_RAYS = btCollisionWorld::RS_WHEEL_RAYS_MAX;
 	alignas(MinDistRayResultCallback) unsigned char storage[MAX_RAYS][sizeof(MinDistRayResultCallback)];
 	btCollisionWorld::RayResultCallback* callbacks[MAX_RAYS];
 	for (int i = 0; i < numRays; i++)
-		callbacks[i] = new (storage[i]) MinDistRayResultCallback(from[i], to[i], ignoreObj, m_minHitDistSq, btBroadphaseProxy::CharacterFilter | addedFilterMask);
+		callbacks[i] = new (storage[i]) MinDistRayResultCallback(from[i], to[i], ignoreObj, minHitDistSq, filterGroup);
 
-	m_dynamicsWorld->rayTestMulti(from, to, callbacks, numRays);
+	world->rayTestMulti(from, to, callbacks, numRays);
 
 	for (int i = 0; i < numRays; i++)
 	{
@@ -127,4 +100,41 @@ void btDefaultVehicleRaycaster::castRays(const btVector3* from, const btVector3*
 		hitObjects[i] = callback->getResult(results[i]);
 		callback->~MinDistRayResultCallback();
 	}
+}
+
+void btDefaultVehicleRaycaster::castRays(const btVector3* from, const btVector3* to, int numRays, const btCollisionObject* ignoreObj, btVehicleRaycasterResult* results, void** hitObjects)
+{
+	constexpr int MAX_RAYS = btCollisionWorld::RS_WHEEL_RAYS_MAX;
+
+	if (numRays > MAX_RAYS)
+	{
+		btVehicleRaycaster::castRays(from, to, numRays, ignoreObj, results, hitObjects);
+		return;
+	}
+
+	// RocketSim: the direct path, with the same results
+	btCollisionWorld::RSRayHit hits[MAX_RAYS];
+	if (m_dynamicsWorld->rsWheelRays(from, to, numRays, btBroadphaseProxy::CharacterFilter | addedFilterMask, btBroadphaseProxy::AllFilter, ignoreObj, m_minHitDistSq, hits, m_rsRayCaches))
+	{
+		for (int i = 0; i < numRays; i++)
+		{
+			hitObjects[i] = 0;
+			// MinDistRayResultCallback::getResult()
+			if (hits[i].object)
+			{
+				const btRigidBody* body = btRigidBody::upcast(hits[i].object);
+				if (body && body->hasContactResponse())
+				{
+					results[i].m_hitPointInWorld = hits[i].point;
+					results[i].m_hitNormalInWorld = hits[i].normal;
+					results[i].m_hitNormalInWorld.normalize();
+					results[i].m_distFraction = hits[i].fraction;
+					hitObjects[i] = (void*)body;
+				}
+			}
+		}
+		return;
+	}
+
+	castRaysGeneral(m_dynamicsWorld, from, to, numRays, ignoreObj, m_minHitDistSq, btBroadphaseProxy::CharacterFilter | addedFilterMask, results, hitObjects);
 }

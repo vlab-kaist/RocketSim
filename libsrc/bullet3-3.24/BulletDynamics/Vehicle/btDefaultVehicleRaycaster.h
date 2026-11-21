@@ -18,6 +18,7 @@ class btDynamicsWorld;
 #include "../../LinearMath/btAlignedObjectArray.h"
 #include "btWheelInfo.h"
 #include "../Dynamics/btActionInterface.h"
+#include "../../BulletCollision/CollisionDispatch/btCollisionWorld.h"
 
 class btDefaultVehicleRaycaster : public btVehicleRaycaster
 {
@@ -27,6 +28,10 @@ public:
 	// RocketSim: hits closer than this (squared) to the ray start are ignored, so that a
 	// graze off the contact patch does not hide a farther hit on the same ray
 	btScalar m_minHitDistSq = 0;
+
+	// RocketSim: what castRays() keeps for each ray between calls (btCollisionWorld::rsWheelRays()); only an
+	// acceleration, the results are the same without it
+	btCollisionWorld::RSWheelRayCache m_rsRayCaches[btCollisionWorld::RS_WHEEL_RAYS_MAX];
 
 	btDefaultVehicleRaycaster() {}
 

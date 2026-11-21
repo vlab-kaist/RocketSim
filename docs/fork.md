@@ -64,7 +64,9 @@ Exact copies are `Arena::Clone()` (Python `clone()`) and snapshots.
 
 ## Speed notes
 
-- Current speed (2026-11-21, one core of the 7950X, `bench`): 1v1 ~820k ticks/s, 3v3 ~305k, ball only ~3.4M.
+- Current speed (2026-11-21, one core of the 7950X, `bench`): 1v1 ~830k ticks/s, 3v3 ~308k, ball only ~3.4M.
+  With the cars driving on the side walls (`bench <meshes> 1 1000 wall`): 1v1 ~477k, 3v3 ~167k. Wall play is about
+  half as fast as floor play: the wheels and the body collide with the arena meshes instead of the floor plane.
 - Profile with `perf record` on `build-bench/bench` (add `-g` to the flags for source lines). The profile is
   flat; the biggest single costs are wheel ray casts, compound AABBs, orientation integration and
   quantization.
@@ -109,6 +111,14 @@ Exact copies are `Arena::Clone()` (Python `clone()`) and snapshots.
   array: the ~20 static mesh bodies per arena are 850-byte objects each, and touching one costs a cache line. Their
   island state (tag -1, companion -2, hit fraction 1) is set when the list is rebuilt; nothing else changes it (the
   solver maps static bodies to its fixed body without writing them).
+- Wheel rays keep their candidates between ticks (`btCollisionWorld::RSWheelRayCache`, one per wheel in
+  `btDefaultVehicleRaycaster`): the static objects of the cell the ray starts in, in visiting order, and for each mesh
+  the tree leaves overlapping a box 100 uu around the ray, with their bounds already unquantized. A leaf the ray
+  passes is always reached by the tree walk (each node on the way contains it, in quantized space, and the float
+  ray-box test is monotonic in the box), so testing only the cached leaves gives the same triangles in the same
+  order, as long as the ray's quantized aabb stays inside the box (checked each call; one world-space check when
+  the meshes aren't rotated). The cache is only an acceleration: it is rebuilt when the cell, the filter or the
+  static objects change, and copies of it (clones) rebuild themselves.
 - Tried and dropped: skipping the rotation in the predicted transform (`predictUnconstraintMotion`, only used to
   widen the AABBs; ~2% faster and the same checksums, but which pairs overlap could change at the margin).
 - Tried without effect: prefetching the next arena's cars, ball, wheels, pads and `Arena` object while the

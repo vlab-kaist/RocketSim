@@ -5,17 +5,19 @@ where they landed (details in `../CHANGELOG.md` and `fork.md`); open items say w
 expected gain. "Exact" means results stay bit for bit the same (bench checksums, `rlval.compare` output);
 non-exact changes need the real-game validation rerun and a recorded reason.
 
-Profile reference (1v1 `bench`, 7950X, 2026-11-21, ~820k ticks/s): wheel path ~25% (ray casts 9%, BVH ray
-traversal 5.5%, vehicle update 5%, friction 2%, wheel basis/transforms 3%), solver and islands ~12%,
+Profile reference (1v1 `bench`, 7950X, 2026-11-21, ~820k ticks/s, before the wheel ray cache): wheel path ~25% (ray
+casts 9%, BVH ray traversal 5.5%, vehicle update 5%, friction 2%, wheel basis/transforms 3%), solver and islands ~12%,
 orientation integration 7%, tick-start quantization ~6%, collision detection (AABBs, broadphase, pairs) ~10%,
 boost pads ~2.5%.
 
 ## Speed: open
 
-- [ ] **Wheel rays: per-car cache of candidate triangles** (exact; in progress). The arena is static and a car
-  moves little per tick, so the triangles near a wheel's ray can be kept and the BVH walked only when the ray
-  leaves the cached box. Exact if the cache holds every triangle the ray could hit and visits them in the BVH's
-  order (ties between equal hit fractions go to the first). Expected 3-8%.
+- [ ] **Wall play is half as fast as floor play** (`bench ... wall`: 1v1 477k vs 830k ticks/s). Profile with the
+  cars on the walls: wheel ray cache checks ~11%, convex-triangle contacts of the body with the meshes
+  (`btConvexTriangleCallback`, connectivity) ~6%, ray-triangle tests ~5%, friction 5%. Next to look at.
+- [ ] **Wheel ray cache footprint**: the caches are per car (items 64 B each, ~6 planes per ray), ~5 more L2 misses
+  per tick with many arenas per core. The plane part is the same for every ray of a cell and could be one shared
+  list per arena (or per static table); only the mesh leaves need to be per ray.
 - [ ] **Solver and islands specialized for a few bodies** (exact if the operation order is kept): no virtual
   calls or generic branches for constraints, multibodies, kinematic bodies; one island path. Expected a few %.
 - [ ] **Tick-start quantization, the rest**: `QuantizeRotation`, quaternion normalize, `FromBasis`/`ToBasis`
@@ -44,6 +46,9 @@ boost pads ~2.5%.
   shortcut found.
 
 ## Speed: done
+
+- [x] Wheel rays keep their candidate triangles between ticks; offset planes tested directly; smaller stack frame
+  (2026-11-21): walls 1v1 +11%, 3v3 +10%; floor +2%.
 
 - [x] Static meshes out of the per-tick loops, quantization `RoundVec` in SSE (2026-11-21, 843c27af): +5% 1v1.
 - [x] Thread scratch for collision pools and solver buffers, idle boost pads skipped (2026-11-20, 5f200de9):

@@ -1843,9 +1843,10 @@ struct RSWheelMeshCallback : public btTriangleRaycastCallback
 }  // namespace
 
 bool btCollisionWorld::rsWheelRays(const btVector3* raysFromWorld, const btVector3* raysToWorld, int numRays, int filterGroup, int filterMask,
-								   const btCollisionObject* ignoreObj, btScalar minDistSq, RSRayHit* hits) const
+								   const btCollisionObject* ignoreObj, btScalar minDistSq, RSRayHit* hits, RSWheelRayCache* caches) const
 {
-	constexpr int MAX_RAYS = 32;
+	// (A car's wheels; the per-ray arrays below live on the stack, so a larger bound costs every call)
+	constexpr int MAX_RAYS = RS_WHEEL_RAYS_MAX;
 	btRSBroadphase* broadphase = m_rsBroadphase;
 	if (!broadphase || numRays > MAX_RAYS)
 		return false;
@@ -1867,6 +1868,255 @@ bool btCollisionWorld::rsWheelRays(const btVector3* raysFromWorld, const btVecto
 		rayMax[r].setMax(raysToWorld[r]);
 	}
 
+	auto isPlaneAtOrigin = [](const btCollisionShape* shape, const btTransform& worldTransform) {
+		return shape->getShapeType() == STATIC_PLANE_PROXYTYPE && worldTransform.getOrigin().isZero() && worldTransform.getBasis() == btMatrix3x3::getIdentity();
+	};
+
+	// Tests the rays in active against one object (that passed the filter)
+	auto testObject = [&](const btCollisionObject* collisionObject, const int* active, int numActive) {
+		const btCollisionShape* shape = collisionObject->getCollisionShape();
+		const btTransform& worldTransform = collisionObject->getWorldTransform();
+		int shapeType = shape->getShapeType();
+		if (isPlaneAtOrigin(shape, worldTransform))
+		{
+			// The plane test of rayTestSingleInternal(), without the (identity) transform
+			const btStaticPlaneShape* plane = (const btStaticPlaneShape*)shape;
+			const btVector3& planeNormal = plane->getPlaneNormal();
+			for (int i = 0; i < numActive; i++)
+			{
+				const RSWheelRay& ray = rays[active[i]];
+				btScalar distFrom = planeNormal.dot(ray.from) - plane->getPlaneConstant();
+				btScalar distTo = planeNormal.dot(ray.to) - plane->getPlaneConstant();
+				if (distFrom * distTo >= btScalar(0))
+					continue;
+				btScalar hitFraction = distFrom / (distFrom - distTo);
+				if (hitFraction < ray.hit->fraction)
+					ray.report(collisionObject, distFrom > 0 ? planeNormal : -planeNormal, hitFraction);
+			}
+		}
+		else if (shapeType == TRIANGLE_MESH_SHAPE_PROXYTYPE)
+		{
+			btBvhTriangleMeshShape* triangleMesh = (btBvhTriangleMeshShape*)shape;
+			btTransform worldTocollisionObject = worldTransform.inverse();
+			btVector3 fromLocal[MAX_RAYS], toLocal[MAX_RAYS];
+			alignas(RSWheelMeshCallback) unsigned char storage[MAX_RAYS][sizeof(RSWheelMeshCallback)];
+			btTriangleCallback* callbacks[MAX_RAYS];
+			for (int i = 0; i < numActive; i++)
+			{
+				fromLocal[i] = worldTocollisionObject * rays[active[i]].from;
+				toLocal[i] = worldTocollisionObject * rays[active[i]].to;
+				callbacks[i] = new (storage[i]) RSWheelMeshCallback(fromLocal[i], toLocal[i], &rays[active[i]], collisionObject, &worldTransform.getBasis());
+			}
+			triangleMesh->performRaycasts(callbacks, fromLocal, toLocal, numActive);
+			for (int i = 0; i < numActive; i++)
+				((RSWheelMeshCallback*)callbacks[i])->~RSWheelMeshCallback();
+		}
+		else
+		{
+			for (int i = 0; i < numActive; i++)
+			{
+				const RSWheelRay& ray = rays[active[i]];
+				btTransform fromTrans, toTrans;
+				fromTrans.setIdentity();
+				fromTrans.setOrigin(ray.from);
+				toTrans.setIdentity();
+				toTrans.setOrigin(ray.to);
+				RSWheelRayAdapter adapter(&ray);
+				rayTestSingle(fromTrans, toTrans, (btCollisionObject*)collisionObject, shape, worldTransform, adapter);
+			}
+		}
+	};
+
+	// RayResultCallback::needsCollision()
+	auto passesFilter = [&](const btRSBroadphaseProxy* proxy, const btCollisionObject* collisionObject) {
+		return (proxy->m_collisionFilterGroup & filterMask) != 0 && (filterGroup & proxy->m_collisionFilterMask) && collisionObject != ignoreObj;
+	};
+
+	// Tests the rays of a group against one of their cell's objects
+	auto testHandle = [&](btRSBroadphaseProxy* proxy, const int* group, int groupSize) {
+		if (!proxy->m_clientObject)
+			return;
+		btCollisionObject* collisionObject = (btCollisionObject*)proxy->m_clientObject;
+		if (!passesFilter(proxy, collisionObject))
+			return;
+
+		bool haveAabb = false;
+		btVector3 objMin, objMax;
+		int active[MAX_RAYS], numActive = 0;
+		for (int g = 0; g < groupSize; g++)
+		{
+			int r = group[g];
+			if (hits[r].fraction == btScalar(0.f))
+				continue;
+			if (!collisionObject->isStaticObject())
+			{
+				if (!haveAabb)
+				{
+					collisionObject->getCollisionShape()->getAabb(collisionObject->getWorldTransform(), objMin, objMax);
+					haveAabb = true;
+				}
+				const btVector3 pad(btScalar(1e-3), btScalar(1e-3), btScalar(1e-3));
+				if (!TestAabbAgainstAabb2(rayMin[r] - pad, rayMax[r] + pad, objMin, objMax))
+					continue;
+			}
+			active[numActive++] = r;
+		}
+		if (numActive)
+			testObject(collisionObject, active, numActive);
+	};
+
+	// The cache of ray r for its cell's static objects
+	auto buildCache = [&](RSWheelRayCache& cache, int r) {
+		cache.items.resize(0);
+		cache.leaves.resize(0);
+		btRSBroadphase::StaticHandleList staticHandles = broadphase->GetStaticHandles(rayCells[r]);
+		const btVector3 margin(RS_WHEEL_RAY_CACHE_MARGIN, RS_WHEEL_RAY_CACHE_MARGIN, RS_WHEEL_RAY_CACHE_MARGIN);
+		const btVector3 boxMin = rayMin[r] - margin, boxMax = rayMax[r] + margin;
+		cache.boxMin = boxMin;
+		cache.boxMax = boxMax;
+		cache.meshesShifted = true;
+		for (int h = 0; h < staticHandles.size(); h++)
+		{
+			btRSBroadphaseProxy* proxy = staticHandles[h];
+			if (!proxy->m_clientObject)
+				continue;
+			const btCollisionObject* collisionObject = (const btCollisionObject*)proxy->m_clientObject;
+			if (!((proxy->m_collisionFilterGroup & filterMask) != 0 && (filterGroup & proxy->m_collisionFilterMask)))
+				continue;
+			const btCollisionShape* shape = collisionObject->getCollisionShape();
+			const btTransform& worldTransform = collisionObject->getWorldTransform();
+			RSWheelRayCache::Item item;
+			item.object = collisionObject;
+			item.kind = RSWheelRayCache::OTHER;
+			item.firstLeaf = item.numLeaves = 0;
+			if (isPlaneAtOrigin(shape, worldTransform))
+			{
+				item.kind = RSWheelRayCache::PLANE;
+				item.planeNormal = ((const btStaticPlaneShape*)shape)->getPlaneNormal();
+				item.planeConstant = ((const btStaticPlaneShape*)shape)->getPlaneConstant();
+			}
+			else if (shape->getShapeType() == STATIC_PLANE_PROXYTYPE)
+			{
+				item.kind = RSWheelRayCache::PLANE_MOVED;
+				item.planeNormal = ((const btStaticPlaneShape*)shape)->getPlaneNormal();
+				item.planeConstant = ((const btStaticPlaneShape*)shape)->getPlaneConstant();
+			}
+			else if (shape->getShapeType() == TRIANGLE_MESH_SHAPE_PROXYTYPE && ((btBvhTriangleMeshShape*)shape)->getOptimizedBvh()->isQuantized())
+			{
+				const btOptimizedBvh* bvh = ((btBvhTriangleMeshShape*)shape)->getOptimizedBvh();
+				item.kind = RSWheelRayCache::MESH;
+				if (!(worldTransform.getBasis() == btMatrix3x3::getIdentity()))
+					cache.meshesShifted = false;
+				// The box in the mesh's space (all corners, for any basis)
+				btTransform worldTocollisionObject = worldTransform.inverse();
+				btVector3 localMin, localMax;
+				for (int c = 0; c < 8; c++)
+				{
+					btVector3 corner((c & 1) ? boxMax.x() : boxMin.x(), (c & 2) ? boxMax.y() : boxMin.y(), (c & 4) ? boxMax.z() : boxMin.z());
+					btVector3 local = worldTocollisionObject * corner;
+					if (c == 0)
+					{
+						localMin = localMax = local;
+					}
+					else
+					{
+						localMin.setMin(local);
+						localMax.setMax(local);
+					}
+				}
+				bvh->rsQuantizeBox(localMin, localMax, item.qMin, item.qMax);
+				item.firstLeaf = cache.leaves.size();
+				bvh->rsCollectLeaves(item.qMin, item.qMax, cache.leaves);
+				item.numLeaves = cache.leaves.size() - item.firstLeaf;
+			}
+			cache.items.push_back(item);
+		}
+		cache.statics = broadphase->staticProxies.data();
+		cache.numStatics = (int)broadphase->staticProxies.size();
+		cache.table = broadphase->staticTable.get();
+		cache.cellIdx = rayCells[r];
+		cache.filterGroup = filterGroup;
+		cache.filterMask = filterMask;
+	};
+
+	// Ray r against its cell's static objects, through its cache. Returns false if the ray left a mesh's box
+	// (having tested the objects before it, which testing again doesn't change: hits replace only closer ones).
+	auto testStaticsCached = [&](RSWheelRayCache& cache, int r, bool lastTry) {
+		const RSWheelRay& ray = rays[r];
+		const bool insideAllMeshes = cache.meshesShifted &&
+			rayMin[r].x() >= cache.boxMin.x() && rayMin[r].y() >= cache.boxMin.y() && rayMin[r].z() >= cache.boxMin.z() &&
+			rayMax[r].x() <= cache.boxMax.x() && rayMax[r].y() <= cache.boxMax.y() && rayMax[r].z() <= cache.boxMax.z();
+		for (int i = 0; i < cache.items.size(); i++)
+		{
+			if (hits[r].fraction == btScalar(0.f))
+				return true;
+			const RSWheelRayCache::Item& item = cache.items[i];
+			if (item.object == ignoreObj)
+				continue;
+			if (item.kind == RSWheelRayCache::PLANE)
+			{
+				btScalar distFrom = item.planeNormal.dot(ray.from) - item.planeConstant;
+				btScalar distTo = item.planeNormal.dot(ray.to) - item.planeConstant;
+				if (distFrom * distTo >= btScalar(0))
+					continue;
+				btScalar hitFraction = distFrom / (distFrom - distTo);
+				if (hitFraction < ray.hit->fraction)
+					ray.report(item.object, distFrom > 0 ? item.planeNormal : -item.planeNormal, hitFraction);
+			}
+			else if (item.kind == RSWheelRayCache::PLANE_MOVED)
+			{
+				// rayTestSingle() -> rayTestSingleInternal(), its plane test, then RSWheelRayAdapter
+				const btTransform& worldTransform = item.object->getWorldTransform();
+				btTransform worldTocollisionObject = worldTransform.inverse();
+				btVector3 rayFromLocal = worldTocollisionObject * ray.from;
+				btVector3 rayToLocal = worldTocollisionObject * ray.to;
+				btScalar distFrom = item.planeNormal.dot(rayFromLocal) - item.planeConstant;
+				btScalar distTo = item.planeNormal.dot(rayToLocal) - item.planeConstant;
+				if (distFrom * distTo >= btScalar(0))
+					continue;
+				btScalar hitFraction = distFrom / (distFrom - distTo);
+				if (hitFraction < ray.hit->fraction)
+				{
+					btVector3 hitNormalLocal = distFrom > 0 ? item.planeNormal : -item.planeNormal;
+					ray.report(item.object, worldTransform.getBasis() * hitNormalLocal, hitFraction);
+				}
+			}
+			else if (item.kind == RSWheelRayCache::MESH)
+			{
+				if (insideAllMeshes && item.numLeaves == 0)
+					continue;
+				btBvhTriangleMeshShape* triangleMesh = (btBvhTriangleMeshShape*)item.object->getCollisionShape();
+				const btOptimizedBvh* bvh = triangleMesh->getOptimizedBvh();
+				const btTransform& worldTransform = item.object->getWorldTransform();
+				btTransform worldTocollisionObject = worldTransform.inverse();
+				btVector3 fromLocal = worldTocollisionObject * ray.from;
+				btVector3 toLocal = worldTocollisionObject * ray.to;
+				unsigned short qRayMin[3], qRayMax[3];
+				bvh->rsQuantizeRay(fromLocal, toLocal, qRayMin, qRayMax);
+				bool inside = insideAllMeshes || qRayMin[0] >= item.qMin[0] && qRayMin[1] >= item.qMin[1] && qRayMin[2] >= item.qMin[2] &&
+							  qRayMax[0] <= item.qMax[0] && qRayMax[1] <= item.qMax[1] && qRayMax[2] <= item.qMax[2];
+				if (!inside)
+				{
+					if (!lastTry)
+						return false;
+					testObject(item.object, &r, 1);
+					continue;
+				}
+				if (item.numLeaves == 0)
+					continue;
+				RSWheelMeshCallback callback(fromLocal, toLocal, &ray, item.object, &worldTransform.getBasis());
+				btTriangleCallback* callbacks[1] = { &callback };
+				MyMultiNodeOverlapCallback nodeCallback(callbacks, triangleMesh->getMeshInterface());
+				bvh->rsRayAgainstLeaves(&nodeCallback, fromLocal, toLocal, qRayMin, qRayMax, &cache.leaves[item.firstLeaf], item.numLeaves);
+			}
+			else
+			{
+				testObject(item.object, &r, 1);
+			}
+		}
+		return true;
+	};
+
 	// Rays are handled in groups by the cell they start in, in the order of their first ray
 	bool done[MAX_RAYS] = {};
 	for (int first = 0; first < numRays; first++)
@@ -1883,100 +2133,39 @@ bool btCollisionWorld::rsWheelRays(const btVector3* raysFromWorld, const btVecto
 			}
 		}
 
-		// The cell's objects in the order btRSBroadphase::rayTest() visits them
+		// The cell's objects in the order btRSBroadphase::rayTest() visits them: static, then dynamic
+		// (each ray's result depends only on the order it sees the objects in)
 		int cellIdx = rayCells[first];
-		btRSBroadphase::StaticHandleList staticHandles = broadphase->GetStaticHandles(cellIdx);
-		const auto& dynHandles = broadphase->cells[cellIdx].dynHandles;
-		int numStatic = staticHandles.size();
-		int numHandles = numStatic + (int)dynHandles.size();
-		for (int h = 0; h < numHandles; h++)
+		if (caches)
 		{
-			btRSBroadphaseProxy* proxy = h < numStatic ? staticHandles[h] : dynHandles[h - numStatic];
-			if (!proxy->m_clientObject)
-				continue;
-			btCollisionObject* collisionObject = (btCollisionObject*)proxy->m_clientObject;
-
-			// RayResultCallback::needsCollision()
-			if (!((proxy->m_collisionFilterGroup & filterMask) != 0 && (filterGroup & proxy->m_collisionFilterMask)) || collisionObject == ignoreObj)
-				continue;
-
-			const btCollisionShape* shape = collisionObject->getCollisionShape();
-			const btTransform& worldTransform = collisionObject->getWorldTransform();
-
-			bool haveAabb = false;
-			btVector3 objMin, objMax;
-			int active[MAX_RAYS], numActive = 0;
+			bool staticsChanged = broadphase->staticTableDirty;
 			for (int g = 0; g < groupSize; g++)
 			{
 				int r = group[g];
-				if (hits[r].fraction == btScalar(0.f))
-					continue;
-				if (!collisionObject->isStaticObject())
+				RSWheelRayCache& cache = caches[r];
+				if (staticsChanged || cache.cellIdx != cellIdx || cache.statics != broadphase->staticProxies.data() ||
+					cache.numStatics != (int)broadphase->staticProxies.size() || cache.table != broadphase->staticTable.get() ||
+					cache.filterGroup != filterGroup || cache.filterMask != filterMask)
 				{
-					if (!haveAabb)
-					{
-						shape->getAabb(worldTransform, objMin, objMax);
-						haveAabb = true;
-					}
-					const btVector3 pad(btScalar(1e-3), btScalar(1e-3), btScalar(1e-3));
-					if (!TestAabbAgainstAabb2(rayMin[r] - pad, rayMax[r] + pad, objMin, objMax))
-						continue;
+					buildCache(cache, r);
+					staticsChanged = false;
 				}
-				active[numActive++] = r;
-			}
-			if (numActive == 0)
-				continue;
-
-			int shapeType = shape->getShapeType();
-			if (shapeType == STATIC_PLANE_PROXYTYPE && worldTransform.getOrigin().isZero() && worldTransform.getBasis() == btMatrix3x3::getIdentity())
-			{
-				// The plane test of rayTestSingleInternal(), without the (identity) transform
-				const btStaticPlaneShape* plane = (const btStaticPlaneShape*)shape;
-				const btVector3& planeNormal = plane->getPlaneNormal();
-				for (int i = 0; i < numActive; i++)
+				if (!testStaticsCached(cache, r, false))
 				{
-					const RSWheelRay& ray = rays[active[i]];
-					btScalar distFrom = planeNormal.dot(ray.from) - plane->getPlaneConstant();
-					btScalar distTo = planeNormal.dot(ray.to) - plane->getPlaneConstant();
-					if (distFrom * distTo >= btScalar(0))
-						continue;
-					btScalar hitFraction = distFrom / (distFrom - distTo);
-					if (hitFraction < ray.hit->fraction)
-						ray.report(collisionObject, distFrom > 0 ? planeNormal : -planeNormal, hitFraction);
-				}
-			}
-			else if (shapeType == TRIANGLE_MESH_SHAPE_PROXYTYPE)
-			{
-				btBvhTriangleMeshShape* triangleMesh = (btBvhTriangleMeshShape*)shape;
-				btTransform worldTocollisionObject = worldTransform.inverse();
-				btVector3 fromLocal[MAX_RAYS], toLocal[MAX_RAYS];
-				alignas(RSWheelMeshCallback) unsigned char storage[MAX_RAYS][sizeof(RSWheelMeshCallback)];
-				btTriangleCallback* callbacks[MAX_RAYS];
-				for (int i = 0; i < numActive; i++)
-				{
-					fromLocal[i] = worldTocollisionObject * rays[active[i]].from;
-					toLocal[i] = worldTocollisionObject * rays[active[i]].to;
-					callbacks[i] = new (storage[i]) RSWheelMeshCallback(fromLocal[i], toLocal[i], &rays[active[i]], collisionObject, &worldTransform.getBasis());
-				}
-				triangleMesh->performRaycasts(callbacks, fromLocal, toLocal, numActive);
-				for (int i = 0; i < numActive; i++)
-					((RSWheelMeshCallback*)callbacks[i])->~RSWheelMeshCallback();
-			}
-			else
-			{
-				for (int i = 0; i < numActive; i++)
-				{
-					const RSWheelRay& ray = rays[active[i]];
-					btTransform fromTrans, toTrans;
-					fromTrans.setIdentity();
-					fromTrans.setOrigin(ray.from);
-					toTrans.setIdentity();
-					toTrans.setOrigin(ray.to);
-					RSWheelRayAdapter adapter(&ray);
-					rayTestSingle(fromTrans, toTrans, collisionObject, shape, worldTransform, adapter);
+					buildCache(cache, r);
+					testStaticsCached(cache, r, true);
 				}
 			}
 		}
+		else
+		{
+			btRSBroadphase::StaticHandleList staticHandles = broadphase->GetStaticHandles(cellIdx);
+			for (int h = 0; h < staticHandles.size(); h++)
+				testHandle(staticHandles[h], group, groupSize);
+		}
+		const auto& dynHandles = broadphase->cells[cellIdx].dynHandles;
+		for (int h = 0; h < (int)dynHandles.size(); h++)
+			testHandle(dynHandles[h], group, groupSize);
 	}
 	return true;
 }
